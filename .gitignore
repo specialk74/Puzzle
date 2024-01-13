@@ -1,3 +1,5 @@
 /target
 /assets
 Cargo.lock
+*.jpg
+*.txt

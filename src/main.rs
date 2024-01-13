@@ -1,16 +1,11 @@
 use anyhow::Error;
 use anyhow::anyhow;
 use anyhow::Result;
-use image::RgbImage;
-use ndarray::ArrayView3;
 use opencv::{self as cv, prelude::*};
 use rayon::iter::IntoParallelIterator;
-use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
 use std::fs::File;
-use std::i32::MAX;
 use std::io::Write;
-use rand::Rng;
 
 fn main() -> Result<()> {
     my_contour()?;
@@ -34,6 +29,7 @@ fn my_contour() -> Result<(), anyhow::Error> {
     "IMG20240113121510"];
 
     file_names.into_par_iter().for_each(|file_name| { process(file_name); });
+    // file_names.into_iter().for_each(|file_name| { process(file_name); });
 
     Ok(())
 }
@@ -45,30 +41,36 @@ fn process(file_name: &str) -> Result<(), anyhow::Error> {
     let phase = to_grey(&phase)?;
     let grey_phase = blur(&phase)?;
 
+    let threshold = search_best_threshold(&grey_phase)?;
+
+    let mut contours = sub_process(&grey_phase, threshold)?;
+    //write_contour(format!("{}_prima", file_name).as_str(), &contours)?;
+    //let mut contours = approx(&contours)?;
+    write_contour(format!("{}", file_name).as_str(), &contours)?;
+    draw_contour(file_name, &orignial_phase, &contours)?;
+    
+    Ok(())
+}
+
+fn search_best_threshold(grey_phase: &Mat) -> Result<i32, Error> {
     let mut threshold = 0;
     let mut min_len = usize::MAX;
     for threshold_value in 0..255 {
-        let contours_cv = sub_process(&grey_phase, threshold_value)?;
+        let contours_cv = sub_process(grey_phase, threshold_value)?;
 
         let mut len = 0;
         for first in &contours_cv {
             len = first.len();
             break;
         }
-    
+
         if  len > 2000 && len < min_len {
             min_len = len;
             threshold = threshold_value;
         }
 
     }
-    let contours_cv = sub_process(&grey_phase, threshold)?;
-    match draw_contour(file_name, &orignial_phase, &contours_cv) {
-        Ok(()) => write_contour(file_name, &contours_cv)?,
-        _ => {}
-    }
-    
-    Ok(())
+    Ok(threshold)
 }
 
 fn blur(phase: &Mat) -> Result<Mat, anyhow::Error> {
@@ -87,8 +89,8 @@ fn sub_process(grey_phase: &Mat, threshold_value: i32) -> Result<cv::core::Vecto
     let phase = threshold(grey_phase, threshold_value)?;
     let phase = bitwise(&phase)?;
     let phase = morph(&phase)?;
-    let contours_cv = contour(&phase)?;
-    Ok(contours_cv)
+    let contour_values = contour(&phase)?;
+    Ok(contour_values)
 }
 
 fn write_contour(file_name: &str, contours_cv: &cv::core::Vector<cv::core::Vector<cv::core::Point_<i32>>>) -> std::io::Result<()> {
@@ -98,7 +100,7 @@ fn write_contour(file_name: &str, contours_cv: &cv::core::Vector<cv::core::Vecto
         for point in first.iter() {
             output += &format!("{},{}\n", point.x, point.y);
         }
-        output += &format!("\n\n\n\n");
+        break;
     }
 
     let mut file = File::create(format!("{}_contour.txt", file_name))?;
@@ -112,20 +114,38 @@ fn to_grey(phase: &Mat) -> Result<Mat, anyhow::Error> {
     Ok(new_phase)
 }
 
+fn approx (contour: &cv::core::Vector<cv::core::Vector<cv::core::Point_<i32>>>) -> Result<cv::core::Vector<cv::core::Vector<cv::core::Point_<i32>>>, anyhow::Error> {
+    let mut new_contour = cv::types::VectorOfVectorOfPoint::new();
+
+    let arch = match cv::imgproc::arc_length(&contour, true) {
+        Ok(value) => value,
+        Err(err) => {
+            println!("Err arc_length: {:?}", err);
+            return Err(anyhow!(err));
+        }
+    };
+    let epsilon = 0.01 * arch;
+
+    println!("epsilon: {}", epsilon);
+    match cv::imgproc::approx_poly_dp(
+        &contour,
+        &mut new_contour,
+        epsilon,
+        true
+    ) {
+        Err(err) => {
+            println!("Approx error: {}", err);
+            return Err(anyhow!(err));
+        },
+        _ => {}
+    };
+    Ok(new_contour)
+}
+
 fn draw_contour(file_name: &str, orignial_phase: &Mat, contours_cv: &cv::core::Vector<cv::core::Vector<cv::core::Point_<i32>>>) -> Result<(), anyhow::Error> {
     let mut phase = orignial_phase.clone();
     let zero_offset = cv::core::Point::new(0, 0);
     let thickness: i32 = 5;
-
-    let mut max_len = 0;
-    for first in contours_cv {
-        max_len = first.len();
-        break;
-    }
-
-    if  max_len < 1000 {
-        return Err(anyhow!("..."));
-    }
 
     let color = cv::core::Scalar::new(0.0, 0.0, 255.0, 255.0);
     cv::imgproc::draw_contours(&mut phase,
@@ -145,16 +165,16 @@ fn draw_contour(file_name: &str, orignial_phase: &Mat, contours_cv: &cv::core::V
 }
 
 fn contour(phase: &Mat) -> Result<cv::core::Vector<cv::core::Vector<cv::core::Point_<i32>>>, anyhow::Error> {
-    let mut contours_cv = cv::types::VectorOfVectorOfPoint::new();
+    let mut contour_values = cv::types::VectorOfVectorOfPoint::new();
     cv::imgproc::find_contours(
         &phase, 
-        &mut contours_cv, 
+        &mut contour_values, 
         cv::imgproc:: RETR_TREE,
         cv::imgproc::CHAIN_APPROX_SIMPLE,
         cv::core::Point::new(0, 0),
     )?;
 
-    Ok(contours_cv)
+    Ok(contour_values)
 }
 
 fn morph(phase: &Mat) -> Result<Mat, anyhow::Error> {
