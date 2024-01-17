@@ -1,6 +1,7 @@
 use anyhow::Error;
 use anyhow::anyhow;
 use anyhow::Result;
+use ndarray::Dimension;
 use opencv::{self as cv, prelude::*};
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
@@ -24,20 +25,21 @@ Ok(())
 
 fn my_contour() -> Result<(), anyhow::Error> {
     let file_names = vec![
-    // "IMG20240109211005", 
-    // "IMG20240113121213", 
-    // "IMG20240113121228", 
-    // "IMG20240113121241",
-    // "IMG20240113121256",
-    // "IMG20240113121307",
-    // "IMG20240113121330",
-    // "IMG20240113121341",
-    // "IMG20240113121354",
-    // "IMG20240113121410",
-    "IMG20240113121426",
-    // "IMG20240113121438",
-    // "IMG20240113121458",
-    // "IMG20240113121510",
+    // "IMG20240109211005.jpg", 
+    // "IMG20240113121213.jpg", 
+    // "IMG20240113121228.jpg", 
+    // "IMG20240113121241.jpg",
+    // "IMG20240113121256.jpg",
+    // "IMG20240113121307.jpg",
+    // "IMG20240113121330.jpg",
+    // "IMG20240113121341.jpg",
+    // "IMG20240113121354.jpg",
+    // "IMG20240113121410.jpg",
+    //"IMG20240117211141.dng",
+    "IMG20240113121426.jpg",
+    // "IMG20240113121438.jpg",
+    // "IMG20240113121458.jpg",
+    // "IMG20240113121510.jpg",
     ];
 
     file_names.into_par_iter().for_each(|file_name| { let _ = process(file_name); });
@@ -46,6 +48,7 @@ fn my_contour() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+#[derive(Debug)]
 enum Direction {
     UpSide,
     DownSide,
@@ -55,22 +58,79 @@ enum Direction {
 
 fn process(file_name: &str) -> Result<(), anyhow::Error> {
     println!("Process: {} ...",file_name);
-    let orignial_phase = cv::imgcodecs::imread(format!("./assets/{}.jpg", file_name).as_str(), cv::imgcodecs::IMREAD_COLOR)?;
+    let orignial_phase = cv::imgcodecs::imread(format!("./assets/{}", file_name).as_str(), cv::imgcodecs::IMREAD_COLOR)?;
     let phase = orignial_phase.clone();
     let phase = to_grey(&phase)?;
     let grey_phase = blur(&phase)?;
 
-    corner(&grey_phase)?;
-
     let threshold = search_best_threshold(&grey_phase)?;
     let (contours, phase) = sub_process(&grey_phase, threshold)?;
     
+    let phase = fill_poly(&grey_phase, &contours)?;
+    //keypoints(&phase);
+    good_features_to_track(&orignial_phase, &phase, &contours)?;
+    //let phase = corner(&phase)?;
+
     let contours = spli_contour(file_name, &grey_phase, contours)?;
-    
+
     write_contour(format!("{}", file_name).as_str(), &contours)?;
     draw_contour(file_name, &orignial_phase, &contours)?;
     
     Ok(())
+}
+
+fn fill_poly(phase: &Mat, contour: &cv::types::VectorOfVectorOfPoint)-> Result<Mat, anyhow::Error> {
+    let white = cv::core::Scalar::new(255.0, 255.0, 255.0, 255.0);
+    let black = cv::core::Scalar::new(0.0, 0.0, 0.0, 255.0);
+    //let line_type: i32 = 2;
+    //let shift: i32 = 0;
+
+    let mut new_phase = cv::core::Mat::new_size_with_default(
+        phase.size()?,
+        cv::core::CV_8UC1,
+        white, 
+    )?;
+
+    match cv::imgproc::fill_poly_def(
+        &mut new_phase,
+        &contour,
+        black,
+    ){
+        Ok(_) => {},
+        Err(err) => println!("Error on fill_poly: {}", err)
+    }
+
+    let name = format!("./fill_poly.jpg");
+    cv::imgcodecs::imwrite(&name, &new_phase, &cv::core::Vector::default())?;
+
+    println!("Fill_poly ends");
+
+    Ok(new_phase)
+}
+
+fn fill_convex_poly(phase: &Mat, contour: &cv::types::VectorOfVectorOfPoint)-> Result<Mat, anyhow::Error> {
+    let color = cv::core::Scalar::new(0.0, 0.0, 0.0, 255.0);
+    //let line_type: i32 = 2;
+    //let shift: i32 = 0;
+
+    let mut new_phase = cv::core::Mat::default();
+    new_phase = phase.clone();
+
+    match cv::imgproc::fill_convex_poly_def(
+        &mut new_phase,
+        &contour,
+        color,
+    ){
+        Ok(_) => {},
+        Err(err) => println!("Error on fill_convex_poly: {}", err)
+    }
+
+    let name = format!("./fill_convex_poly.jpg");
+    cv::imgcodecs::imwrite(&name, &new_phase, &cv::core::Vector::default())?;
+
+    println!("Fill_convex_poly ends");
+
+    Ok(new_phase)
 }
 
 fn dilate(phase: &Mat) -> Result<Mat, anyhow::Error> {
@@ -119,44 +179,46 @@ println!("dilate1");
 
 
 fn corner(phase: &Mat) -> Result<Mat, anyhow::Error> {
-    let block_size = 2;
-    let ksize = 3;
-    let k = 0.04;
+    let block_size = 30;
+    let ksize = 5;
+    let k = 10.04;
     let mut new_phase = cv::core::Mat::default();
 
-    cv::imgproc::corner_harris_def (
+    match cv::imgproc::corner_harris_def (
         &phase,
         &mut new_phase,
         block_size,
         ksize,
         k
-    )?;
-
-    println!("{:?}", &new_phase);
+    ){
+        Ok(new_phase) => {},
+        Err(err) => println!("Erro on corner: {}", err)
+    }
 
     let name = format!("./corner.jpg");
     cv::imgcodecs::imwrite(&name, &phase, &cv::core::Vector::default())?;
 
+    println!("Corner end");
     Ok(new_phase)
 }
 
 fn spli_contour(file_name: &str, grey_phase: &Mat, original_contour: cv::types::VectorOfVectorOfPoint) -> Result<cv::types::VectorOfVectorOfPoint, Error> {
     let mut contour_values = cv::types::VectorOfVectorOfPoint::new();
 
-    let sobel_image = sobel(&file_name, &grey_phase, Direction::RightSide)?;
-    let single_contours = split_single_contour(&original_contour, &sobel_image, Direction::RightSide)?;
+    // let sobel_image = sobel(&file_name, &grey_phase, Direction::RightSide)?;
+    let single_contours = split_single_contour(&original_contour, Direction::RightSide)?;
     contour_values.push(single_contours);
 
-    let sobel_image = sobel(&file_name, &grey_phase, Direction::LeftSide)?;
-    let single_contours = split_single_contour(&original_contour, &sobel_image, Direction::LeftSide)?;
+    // let sobel_image = sobel(&file_name, &grey_phase, Direction::LeftSide)?;
+    let single_contours = split_single_contour(&original_contour, Direction::LeftSide)?;
     contour_values.push(single_contours);
     
-    let sobel_image = sobel(&file_name, &grey_phase, Direction::DownSide)?;
-    let single_contours = split_single_contour(&original_contour, &sobel_image, Direction::DownSide)?;
+    // let sobel_image = sobel(&file_name, &grey_phase, Direction::DownSide)?;
+    let single_contours = split_single_contour(&original_contour, Direction::DownSide)?;
     contour_values.push(single_contours);
     
-    let sobel_image = sobel(&file_name, &grey_phase, Direction::UpSide)?;
-    let single_contours = split_single_contour(&original_contour, &sobel_image, Direction::UpSide)?;
+    // let sobel_image = sobel(&file_name, &grey_phase, Direction::UpSide)?;
+    let single_contours = split_single_contour(&original_contour, Direction::UpSide)?;
     contour_values.push(single_contours);
     
     Ok(contour_values)
@@ -270,9 +332,11 @@ impl Side {
     }
 } */
 
-fn split_single_contour(contours: &cv::types::VectorOfVectorOfPoint, phase: &Mat, direction: Direction) -> std::io::Result<cv::types::VectorOfPoint> {
+fn split_single_contour(contours: &cv::types::VectorOfVectorOfPoint, direction: Direction) -> std::io::Result<cv::types::VectorOfPoint> {
     // let mut index = 0;
     // let mut side = Vec::<Side>::new();
+
+    //println!("split_single_contour: {:?} start...", direction);
     let mut vector = cv::types::VectorOfPoint::new();
 
 
@@ -290,73 +354,58 @@ fn split_single_contour(contours: &cv::types::VectorOfVectorOfPoint, phase: &Mat
             Err(err) => println!("Error: {:?}", err),
         }
 
-        for point in first.iter() {
-            match direction {
-                Direction::DownSide => {
-                    if point.y > 2897 {
-                        //vector.push(cv::core::Point::new(point.x, point.y));
-                        vector.push(cv::core::Point::new(0, 0));
-                    }
-                },
-                Direction::UpSide => {
-                    if point.x > 1048 && point.x < 2568 && point.y < cy as i32 {
-                        vector.push(cv::core::Point::new(point.x, point.y));
-                    }
-                },
-                Direction::RightSide => {
-                    if point.x > cx as i32{
-                        //vector.push(cv::core::Point::new(point.x, point.y));
-                        vector.push(cv::core::Point::new(0, 0));
-                    }
-                },
-                Direction::LeftSide => {
-                    if point.x < cx as i32 {
-                        //vector.push(cv::core::Point::new(point.x, point.y));
-                        vector.push(cv::core::Point::new(0, 0));
-                    }
-                },
-            }
-            // vector.push(cv::core::Point::new(point.x, point.y));
-            // side.push(Side::new(point.x, point.y, true));
+        let mut polygon = cv::types::VectorOfPoint::new();
+        polygon.push(cv::core::Point::new(cx as i32, cy as i32));
+
+        // cv::core::Point::new(1062,1034)
+        // cv::core::Point::new(2370,3149)
+        // cv::core::Point::new(729,2968)
+        // cv::core::Point::new(2542,1232)
+
+        let delta = 1000;
+
+        match direction {
+            Direction::DownSide => {
+                polygon.push(cv::core::Point::new(729, 2968));
+                polygon.push(cv::core::Point::new(2370, 3149));
+                polygon.push(cv::core::Point::new(729, 2968+delta));
+                polygon.push(cv::core::Point::new(2370, 3149+delta));
+            },
+            Direction::UpSide => {
+                polygon.push(cv::core::Point::new(1062, 1034));
+                polygon.push(cv::core::Point::new(2542, 1232));
+                polygon.push(cv::core::Point::new(1062, 1034-delta));
+                polygon.push(cv::core::Point::new(2542, 1232-delta));
+            },
+            Direction::RightSide => {
+                polygon.push(cv::core::Point::new(2370, 3149));
+                polygon.push(cv::core::Point::new(2542, 1232));
+                polygon.push(cv::core::Point::new(2370 + delta, 3149));
+                polygon.push(cv::core::Point::new(2542 +delta, 1232));
+            },
+            Direction::LeftSide => {
+                polygon.push(cv::core::Point::new(1062, 1034));
+                polygon.push(cv::core::Point::new(729, 2968));
+                polygon.push(cv::core::Point::new(1062-delta, 1034));
+                polygon.push(cv::core::Point::new(729-delta, 2968));
+            },
         }
 
-
-        /* for point in first.iter() {
-            match phase.at_2d::<u16>(point.y,point.x) {
-                Ok(n) => {
-                    if *n > 0 {
-                        match direction {
-                            Direction::DownSide => {
-                                if point.y > cy as i32{
-                                    vector.push(cv::core::Point::new(point.x, point.y));
-                                }
-                            },
-                            Direction::UpSide => {
-                                if point.y < cy as i32{
-                                    vector.push(cv::core::Point::new(point.x, point.y));
-                                }
-                            },
-                            Direction::RightSide => {
-                                if point.x > cx as i32{
-                                    vector.push(cv::core::Point::new(point.x, point.y));
-                                }
-                            },
-                            Direction::LeftSide => {
-                                if point.x < cx as i32 {
-                                    vector.push(cv::core::Point::new(point.x, point.y));
-                                }
-                            },
+        for point in first.iter() {
+            match cv::imgproc::point_polygon_test(
+                &polygon,
+                cv::core::Point2f::new(point.x as f32, point.y as f32),
+                true){
+                    Ok(val) => {
+                        if val >= 0.0 {
+                            //println!("{:?} -> x: {}, y: {} -> val: {}", direction, point.x, point.y, val);
+                            vector.push(cv::core::Point::new(point.x, point.y));  
                         }
-                        // vector.push(cv::core::Point::new(point.x, point.y));
-                        // side.push(Side::new(point.x, point.y, true));
-                    }
-                    else {
-                        // side.push(Side::new(point.x, point.y, false));
-                    }
+                    },
+                    Err(err) => {println!("Error on split_single_contour: {}", err);}
                 }
-                Err(err) => {println!("Error: {}", err);}
-            }
-        } */
+        }
+
         break;
     }
 
@@ -370,8 +419,108 @@ fn split_single_contour(contours: &cv::types::VectorOfVectorOfPoint, phase: &Mat
 
     let mut file = File::create(format!("{}_side.txt", direction))?;
     file.write_all(output.as_bytes())?; */
+    //println!("split_single_contour: {:?} ends", direction);
 
     Ok(vector)
+}
+
+fn good_features_to_track(original: &Mat, phase: &Mat, contours: &cv::types::VectorOfVectorOfPoint)-> Result<cv::types::VectorOfPoint, anyhow::Error> {
+
+    let mut corners = cv::types::VectorOfPoint::new();
+    let max_corners = 4;
+    let quality_level = 0.1;
+    let min_distance = 1300.0;
+    let mask = &contours;
+    let mut block_size: i32 = 52;
+    let use_harris_detector: bool = false;
+    let k: f64 = 0.1;
+
+        println!("good_features_to_track - block_size: {}", block_size);
+        match cv::imgproc::good_features_to_track(
+            &phase,
+            &mut corners,
+            max_corners,
+            quality_level,
+            min_distance,
+            &cv::core::no_array(),
+            block_size,
+            use_harris_detector,
+            k
+        ){
+            Ok(_) => {},
+            Err(err) => println!("Error on good_features_to_track: {}", err)
+        }
+
+        if corners.len() == 4 {
+            //dbg!(&corners);
+            let mut new_phase = cv::core::Mat::default();
+            new_phase = original.clone();
+            let color = cv::core::Scalar::new(0.0, 0.0, 255.0, 255.0);
+
+            for point in corners.iter() {
+                cv::imgproc::circle (
+                    &mut new_phase,
+                    point,
+                    20,
+                    color,
+                    cv::imgproc::FILLED,
+                    cv::imgproc::LINE_8,
+                    0
+                )?;
+            }
+
+            let name = format!("./good_features_to_track.jpg");
+            cv::imgcodecs::imwrite(&name, &new_phase, &cv::core::Vector::default())?;
+        }
+
+    println!("good_features_to_track ends");
+
+    Ok(corners)
+}
+
+
+fn keypoints(phase: &Mat)-> Result<cv::types::VectorOfKeyPoint, anyhow::Error> {
+
+    let mut corners = cv::types::VectorOfKeyPoint::new();
+
+    match cv::features2d::fast(
+        &phase,
+        &mut corners,
+        0,
+        false
+    ){
+        Ok(_) => {},
+        Err(err) => println!("Error on keypoints: {}", err)
+    }
+
+    dbg!(&corners);
+
+    let mut new_phase = cv::core::Mat::default();
+    new_phase = phase.clone();
+    let color = cv::core::Scalar::new(255.0, 255.0, 255.0, 255.0);
+
+    for point in corners.iter() {
+        let x = point.pt().x as i32;
+        let y = point.pt().y as i32;
+
+        cv::imgproc::circle (
+            &mut new_phase,
+            cv::core::Point::new(x, y),
+            50,
+            color,
+            cv::imgproc::FILLED,
+            cv::imgproc::LINE_8,
+            0
+        )?;
+    }
+
+    let name = format!("./keypoints.jpg");
+    cv::imgcodecs::imwrite(&name, &new_phase, &cv::core::Vector::default())?;
+    
+
+    println!("keypoints ends");
+
+    Ok(corners)
 }
 
 fn write_contour(file_name: &str, contours_cv: &cv::types::VectorOfVectorOfPoint) -> std::io::Result<()> {
@@ -436,8 +585,8 @@ fn write_contour(file_name: &str, contours_cv: &cv::types::VectorOfVectorOfPoint
         output += "\n\n";
     }
 
-    println!("up_right:{:?} - up_left:{:?} - down_right:{:?} - down_left:{:?}", up_right, up_left, down_right, down_left);
-    println!("x_min:{:?} - x_max:{:?} - y_min:{:?} - y_max:{:?}", x_min, x_max, y_min, y_max);
+    // println!("up_right:{:?} - up_left:{:?} - down_right:{:?} - down_left:{:?}", up_right, up_left, down_right, down_left);
+    // println!("x_min:{:?} - x_max:{:?} - y_min:{:?} - y_max:{:?}", x_min, x_max, y_min, y_max);
 
     let mut file = File::create(format!("{}_contour.txt", file_name))?;
     file.write_all(output.as_bytes())?;
@@ -446,8 +595,18 @@ fn write_contour(file_name: &str, contours_cv: &cv::types::VectorOfVectorOfPoint
 }
 
 fn to_grey(phase: &Mat) -> Result<Mat, anyhow::Error> {
+    println!("To Grey phase...");
     let mut new_phase = cv::core::Mat::default();
-    cv::imgproc::cvt_color(&phase, &mut new_phase, cv::imgproc::COLOR_BGR2GRAY, 0)?;
+    match cv::imgproc::cvt_color(&phase, 
+        &mut new_phase, 
+        cv::imgproc::COLOR_BGR2GRAY, 
+        0){
+            Ok(_) => {},
+            Err(err) => {
+                println!("To Grey Error: {}", err);
+                return Err(anyhow!(err));
+            }
+        }
 
     Ok(new_phase)
 }
@@ -457,6 +616,8 @@ fn draw_contour(file_name: &str, orignial_phase: &Mat, contours_cv: &cv::types::
     let zero_offset = cv::core::Point::new(0, 0);
     let thickness: i32 = 20;
 
+    println!("draw_contour");
+
     let mut rng = rand::thread_rng();
 
     for index in 0..contours_cv.len() {
@@ -464,7 +625,7 @@ fn draw_contour(file_name: &str, orignial_phase: &Mat, contours_cv: &cv::types::
         let n2 = rng.gen_range(0.0..255.0);
         let n3 = rng.gen_range(0.0..255.0);
         let color = cv::core::Scalar::new(n1, n2, n3, 255.0);
-        cv::imgproc::draw_contours(&mut phase,
+        match cv::imgproc::draw_contours(&mut phase,
             contours_cv,
             index as i32,
             color,
@@ -472,13 +633,19 @@ fn draw_contour(file_name: &str, orignial_phase: &Mat, contours_cv: &cv::types::
             cv::imgproc::LINE_8,
             &cv::core::no_array(),
             2,
-            zero_offset)?;
+            zero_offset){
+                Ok(_) => {},
+                Err(err) => {
+                    println!("Error on draw_contours - index {}: {}", index, err);
+                    return Err(anyhow!(err));
+                }
+            }
     }
 
-        cv::imgproc::line(
+    /* cv::imgproc::line(
         &mut phase,
-        cv::core::Point::new(2568,1302), // up_right
-        cv::core::Point::new(696,2897), // down_left
+        cv::core::Point::new(1062,1034), // up_right
+        cv::core::Point::new(2370,3149), // down_left
         cv::core::Scalar::new(255.0, 0.0, 0.0, 255.0),
         50,
         cv::imgproc::LINE_8,
@@ -487,14 +654,15 @@ fn draw_contour(file_name: &str, orignial_phase: &Mat, contours_cv: &cv::types::
 
     cv::imgproc::line(
         &mut phase,
-        cv::core::Point::new(1048,1009), // up_left
-        cv::core::Point::new(2321,3165), // down_right
+        cv::core::Point::new(729,2968), // up_left
+        cv::core::Point::new(2542,1232), // down_right
         cv::core::Scalar::new(255.0, 255.0, 0.0, 255.0),
         50,
         cv::imgproc::LINE_8,
         0
-    )?;
+    )?; */
 
+    println!("draw_contour -> create file");
     let name = format!("./{}_contours.jpg", file_name);
     cv::imgcodecs::imwrite(&name, &phase, &cv::core::Vector::default())?;
 
