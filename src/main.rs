@@ -12,10 +12,57 @@ use opencv::core::Point;
 use rand::Rng;
 
 struct PuzzlePiece {
-    side1: Vec<Point>,
-    side2: Vec<Point>,
-    side3: Vec<Point>,
-    side4: Vec<Point>,
+    side1: cv::types::VectorOfPoint,
+    side2: cv::types::VectorOfPoint,
+    side3: cv::types::VectorOfPoint,
+    side4: cv::types::VectorOfPoint,
+
+    x_min: i32,
+    y_min: i32,
+    x_max: i32,
+    y_max: i32,
+
+    original: Mat,
+    grey: Mat,
+    contours: cv::types::VectorOfVectorOfPoint,
+    corners: cv::types::VectorOfPoint,
+
+    cx: i32,
+    cy: i32,
+
+    left_up_corner: Point,
+    left_down_corner: Point,
+    right_up_corner: Point,
+    right_down_corner: Point,
+}
+
+impl PuzzlePiece {
+    fn new() -> Self {
+        Self {
+            side1: cv::types::VectorOfPoint::default(),
+            side2: cv::types::VectorOfPoint::default(),
+            side3: cv::types::VectorOfPoint::default(),
+            side4: cv::types::VectorOfPoint::default(),
+
+            x_min: 0,
+            y_min: 0,
+            x_max: 0,
+            y_max: 0,
+
+            original: cv::core::Mat::default(),
+            grey: cv::core::Mat::default(),
+            contours: cv::types::VectorOfVectorOfPoint::default(),
+            corners: cv::types::VectorOfPoint::default(),
+
+            cx : 0,
+            cy: 0,
+
+            left_up_corner: Point::new(0,0),
+            left_down_corner: Point::new(0,0),
+            right_up_corner: Point::new(0,0),
+            right_down_corner: Point::new(0,0),
+        }
+    }
 }
 
 fn main() -> Result<()> {
@@ -58,23 +105,25 @@ enum Direction {
 
 fn process(file_name: &str) -> Result<(), anyhow::Error> {
     println!("Process: {} ...",file_name);
-    let orignial_phase = cv::imgcodecs::imread(format!("./assets/{}", file_name).as_str(), cv::imgcodecs::IMREAD_COLOR)?;
-    let phase = orignial_phase.clone();
+    let mut puzzle_piece = PuzzlePiece::new();
+    puzzle_piece.original = cv::imgcodecs::imread(format!("./assets/{}", file_name).as_str(), cv::imgcodecs::IMREAD_COLOR)?;
+    
+    let phase = puzzle_piece.original.clone();
     let phase = to_grey(&phase)?;
     let grey_phase = blur(&phase)?;
 
     let threshold = search_best_threshold(&grey_phase)?;
     let (contours, phase) = sub_process(&grey_phase, threshold)?;
+    puzzle_piece.contours = contours;
     
-    let phase = fill_poly(&grey_phase, &contours)?;
-    //keypoints(&phase);
-    good_features_to_track(&orignial_phase, &phase, &contours)?;
-    //let phase = corner(&phase)?;
+    let phase = fill_poly(&grey_phase, &puzzle_piece.contours)?;
+    let corners = good_features_to_track(&puzzle_piece, &phase)?;
+    puzzle_piece.corners = corners;
 
-    let contours = spli_contour(file_name, &grey_phase, contours)?;
+    let contours = spli_contour(file_name, &grey_phase, &puzzle_piece.contours)?;
 
-    write_contour(format!("{}", file_name).as_str(), &contours)?;
-    draw_contour(file_name, &orignial_phase, &contours)?;
+    write_contour(format!("{}", file_name).as_str(), &puzzle_piece.contours)?;
+    draw_contour(file_name, &puzzle_piece)?;
     
     Ok(())
 }
@@ -202,23 +251,23 @@ fn corner(phase: &Mat) -> Result<Mat, anyhow::Error> {
     Ok(new_phase)
 }
 
-fn spli_contour(file_name: &str, grey_phase: &Mat, original_contour: cv::types::VectorOfVectorOfPoint) -> Result<cv::types::VectorOfVectorOfPoint, Error> {
+fn spli_contour(file_name: &str, grey_phase: &Mat, original_contour: &cv::types::VectorOfVectorOfPoint) -> Result<cv::types::VectorOfVectorOfPoint, Error> {
     let mut contour_values = cv::types::VectorOfVectorOfPoint::new();
 
     // let sobel_image = sobel(&file_name, &grey_phase, Direction::RightSide)?;
-    let single_contours = split_single_contour(&original_contour, Direction::RightSide)?;
+    let single_contours = split_single_contour(original_contour, Direction::RightSide)?;
     contour_values.push(single_contours);
 
     // let sobel_image = sobel(&file_name, &grey_phase, Direction::LeftSide)?;
-    let single_contours = split_single_contour(&original_contour, Direction::LeftSide)?;
+    let single_contours = split_single_contour(original_contour, Direction::LeftSide)?;
     contour_values.push(single_contours);
     
     // let sobel_image = sobel(&file_name, &grey_phase, Direction::DownSide)?;
-    let single_contours = split_single_contour(&original_contour, Direction::DownSide)?;
+    let single_contours = split_single_contour(original_contour, Direction::DownSide)?;
     contour_values.push(single_contours);
     
     // let sobel_image = sobel(&file_name, &grey_phase, Direction::UpSide)?;
-    let single_contours = split_single_contour(&original_contour, Direction::UpSide)?;
+    let single_contours = split_single_contour(original_contour, Direction::UpSide)?;
     contour_values.push(single_contours);
     
     Ok(contour_values)
@@ -332,6 +381,25 @@ impl Side {
     }
 } */
 
+fn find_centroid(puzzle: &PuzzlePiece) -> (i32, i32) {
+    let mut cx = 0.0;
+    let mut cy = 0.0;
+
+    for first in &puzzle.contours {
+        match cv::imgproc::moments_def(&first) {
+            Ok(moment) =>         {
+                // println!("moment: {:?}", moment);
+                // println!("X: {}, Y: {}", moment.m10/moment.m00, moment.m01/moment.m00);
+                cx = moment.m10/moment.m00;
+                cy = moment.m01/moment.m00;
+            },
+            Err(err) => println!("Error: {:?}", err),
+        }
+    }
+
+    (cx as i32, cy as i32)
+}
+
 fn split_single_contour(contours: &cv::types::VectorOfVectorOfPoint, direction: Direction) -> std::io::Result<cv::types::VectorOfPoint> {
     // let mut index = 0;
     // let mut side = Vec::<Side>::new();
@@ -354,6 +422,8 @@ fn split_single_contour(contours: &cv::types::VectorOfVectorOfPoint, direction: 
             Err(err) => println!("Error: {:?}", err),
         }
 
+        dbg!(cx);
+        dbg!(cy);
         let mut polygon = cv::types::VectorOfPoint::new();
         polygon.push(cv::core::Point::new(cx as i32, cy as i32));
 
@@ -367,27 +437,27 @@ fn split_single_contour(contours: &cv::types::VectorOfVectorOfPoint, direction: 
         match direction {
             Direction::DownSide => {
                 polygon.push(cv::core::Point::new(729, 2968));
-                polygon.push(cv::core::Point::new(2370, 3149));
                 polygon.push(cv::core::Point::new(729, 2968+delta));
                 polygon.push(cv::core::Point::new(2370, 3149+delta));
+                polygon.push(cv::core::Point::new(2370, 3149));
             },
             Direction::UpSide => {
                 polygon.push(cv::core::Point::new(1062, 1034));
-                polygon.push(cv::core::Point::new(2542, 1232));
                 polygon.push(cv::core::Point::new(1062, 1034-delta));
                 polygon.push(cv::core::Point::new(2542, 1232-delta));
+                polygon.push(cv::core::Point::new(2542, 1232));
             },
             Direction::RightSide => {
                 polygon.push(cv::core::Point::new(2370, 3149));
-                polygon.push(cv::core::Point::new(2542, 1232));
                 polygon.push(cv::core::Point::new(2370 + delta, 3149));
                 polygon.push(cv::core::Point::new(2542 +delta, 1232));
+                polygon.push(cv::core::Point::new(2542, 1232));
             },
             Direction::LeftSide => {
                 polygon.push(cv::core::Point::new(1062, 1034));
-                polygon.push(cv::core::Point::new(729, 2968));
                 polygon.push(cv::core::Point::new(1062-delta, 1034));
                 polygon.push(cv::core::Point::new(729-delta, 2968));
+                polygon.push(cv::core::Point::new(729, 2968));
             },
         }
 
@@ -424,13 +494,13 @@ fn split_single_contour(contours: &cv::types::VectorOfVectorOfPoint, direction: 
     Ok(vector)
 }
 
-fn good_features_to_track(original: &Mat, phase: &Mat, contours: &cv::types::VectorOfVectorOfPoint)-> Result<cv::types::VectorOfPoint, anyhow::Error> {
+fn good_features_to_track(puzzle: &PuzzlePiece, phase: &Mat)-> Result<cv::types::VectorOfPoint, anyhow::Error> {
 
     let mut corners = cv::types::VectorOfPoint::new();
     let max_corners = 4;
     let quality_level = 0.1;
     let min_distance = 1300.0;
-    let mask = &contours;
+    let mask = &puzzle.contours;
     let mut block_size: i32 = 52;
     let use_harris_detector: bool = false;
     let k: f64 = 0.1;
@@ -454,7 +524,7 @@ fn good_features_to_track(original: &Mat, phase: &Mat, contours: &cv::types::Vec
         if corners.len() == 4 {
             //dbg!(&corners);
             let mut new_phase = cv::core::Mat::default();
-            new_phase = original.clone();
+            new_phase = puzzle.original.clone();
             let color = cv::core::Scalar::new(0.0, 0.0, 255.0, 255.0);
 
             for point in corners.iter() {
@@ -473,6 +543,7 @@ fn good_features_to_track(original: &Mat, phase: &Mat, contours: &cv::types::Vec
             cv::imgcodecs::imwrite(&name, &new_phase, &cv::core::Vector::default())?;
         }
 
+    dbg!(&corners);
     println!("good_features_to_track ends");
 
     Ok(corners)
@@ -611,8 +682,9 @@ fn to_grey(phase: &Mat) -> Result<Mat, anyhow::Error> {
     Ok(new_phase)
 }
 
-fn draw_contour(file_name: &str, orignial_phase: &Mat, contours_cv: &cv::types::VectorOfVectorOfPoint) -> Result<(), anyhow::Error> {
-    let mut phase = orignial_phase.clone();
+fn draw_contour(file_name: &str, puzzle: &PuzzlePiece) -> Result<(), anyhow::Error> {
+
+    let mut phase = puzzle.original.clone();
     let zero_offset = cv::core::Point::new(0, 0);
     let thickness: i32 = 20;
 
@@ -620,13 +692,13 @@ fn draw_contour(file_name: &str, orignial_phase: &Mat, contours_cv: &cv::types::
 
     let mut rng = rand::thread_rng();
 
-    for index in 0..contours_cv.len() {
+    for index in 0..puzzle.contours.len() {
         let n1 = rng.gen_range(0.0..255.0);
         let n2 = rng.gen_range(0.0..255.0);
         let n3 = rng.gen_range(0.0..255.0);
         let color = cv::core::Scalar::new(n1, n2, n3, 255.0);
         match cv::imgproc::draw_contours(&mut phase,
-            contours_cv,
+            &puzzle.contours,
             index as i32,
             color,
             thickness,
@@ -642,25 +714,107 @@ fn draw_contour(file_name: &str, orignial_phase: &Mat, contours_cv: &cv::types::
             }
     }
 
-    /* cv::imgproc::line(
+    /* 
+    let delta = 0;
+    cv::imgproc::line(
         &mut phase,
-        cv::core::Point::new(1062,1034), // up_right
-        cv::core::Point::new(2370,3149), // down_left
+        cv::core::Point::new(1062 - delta,1034 - delta), // up_right
+        cv::core::Point::new(2370+delta,3149+delta), // down_left
         cv::core::Scalar::new(255.0, 0.0, 0.0, 255.0),
-        50,
+        5,
         cv::imgproc::LINE_8,
         0
     )?;
 
     cv::imgproc::line(
         &mut phase,
-        cv::core::Point::new(729,2968), // up_left
-        cv::core::Point::new(2542,1232), // down_right
-        cv::core::Scalar::new(255.0, 255.0, 0.0, 255.0),
-        50,
+        cv::core::Point::new(729-delta,2968+delta), // up_left
+        cv::core::Point::new(2542+delta,1232-delta), // down_right
+        cv::core::Scalar::new(0.0, 0.0, 255.0, 255.0),
+        5,
         cv::imgproc::LINE_8,
         0
-    )?; */
+    )?;
+    */
+
+    let mut polygon = cv::types::VectorOfPoint::new();
+    let cx = 1660;
+    let cy = 2152;
+
+        // cv::core::Point::new(1062,1034)
+        // cv::core::Point::new(2370,3149)
+        // cv::core::Point::new(729,2968)
+        // cv::core::Point::new(2542,1232)
+
+        let delta = 500;
+        polygon.clear();
+        polygon.push(cv::core::Point::new(cx as i32, cy as i32));
+        polygon.push(cv::core::Point::new(729, 2968));
+        polygon.push(cv::core::Point::new(729, 2968+delta));
+        polygon.push(cv::core::Point::new(2370, 3149+delta));
+        polygon.push(cv::core::Point::new(2370, 3149));
+
+        cv::imgproc::polylines(
+            &mut phase,
+            &polygon,
+            true,
+            cv::core::Scalar::new(255.0, 255.0, 0.0, 255.0),
+            10,
+            cv::imgproc::LINE_8,
+            0
+        )?;
+
+
+        polygon.clear();
+        polygon.push(cv::core::Point::new(cx as i32, cy as i32));
+        polygon.push(cv::core::Point::new(1062, 1034));
+        polygon.push(cv::core::Point::new(1062, 1034-delta));
+        polygon.push(cv::core::Point::new(2542, 1232-delta));
+        polygon.push(cv::core::Point::new(2542, 1232));
+        cv::imgproc::polylines(
+            &mut phase,
+            &polygon,
+            true,
+            cv::core::Scalar::new(0.0, 0.0, 0.0, 255.0),
+            10,
+            cv::imgproc::LINE_8,
+            0
+        )?;
+
+        polygon.clear();
+        polygon.push(cv::core::Point::new(cx as i32, cy as i32));
+        polygon.push(cv::core::Point::new(2370, 3149));
+        polygon.push(cv::core::Point::new(2370 + delta, 3149));
+        polygon.push(cv::core::Point::new(2542 +delta, 1232));
+        polygon.push(cv::core::Point::new(2542, 1232));
+        cv::imgproc::polylines(
+            &mut phase,
+            &polygon,
+            true,
+            cv::core::Scalar::new(255.0, 0.0, 255.0, 255.0),
+            10,
+            cv::imgproc::LINE_8,
+            0
+        )?;
+
+        polygon.clear();
+        polygon.push(cv::core::Point::new(cx as i32, cy as i32));
+        polygon.push(cv::core::Point::new(1062, 1034));
+        polygon.push(cv::core::Point::new(1062-delta, 1034));
+        polygon.push(cv::core::Point::new(729-delta, 2968));
+        polygon.push(cv::core::Point::new(729, 2968));
+        cv::imgproc::polylines(
+            &mut phase,
+            &polygon,
+            true,
+            cv::core::Scalar::new(0.0, 255.0, 255.0, 255.0),
+            10,
+            cv::imgproc::LINE_8,
+            0
+        )?;
+    
+
+
 
     println!("draw_contour -> create file");
     let name = format!("./{}_contours.jpg", file_name);
