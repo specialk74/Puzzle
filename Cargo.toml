@@ -12,3 +12,5 @@ ndarray = "0.15.6"
 opencv = "0.88.6"
 rand = "0.8.5"
 rayon = "1.8.0"
+strum = { version = "0.25", features = ["derive"] }
+strum_macros = "0.25"
