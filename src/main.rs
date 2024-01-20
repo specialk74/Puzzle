@@ -31,6 +31,8 @@ struct PuzzlePiece {
     left_down_corner: Point,
     right_up_corner: Point,
     right_down_corner: Point,
+
+    rect: cv::core::Rect,
 }
 
 impl PuzzlePiece {
@@ -56,6 +58,8 @@ impl PuzzlePiece {
             left_down_corner: Point::new(i32::MAX,0),
             right_up_corner: Point::new(0,i32::MAX),
             right_down_corner: Point::new(0,0),
+
+            rect: cv::core::Rect::default(),
         }
     }
 }
@@ -67,20 +71,20 @@ Ok(())
 
 fn my_contour() -> Result<(), anyhow::Error> {
     let file_names = vec![
-    "IMG20240109211005", 
-    "IMG20240113121213", 
+    // "IMG20240109211005", 
+    // "IMG20240113121213", 
     "IMG20240113121228", 
-    "IMG20240113121241",
-    "IMG20240113121256",
-    "IMG20240113121307",
-    "IMG20240113121330",
-    "IMG20240113121341",
-    "IMG20240113121354",
+    // "IMG20240113121241",
+    // "IMG20240113121256",
+    // "IMG20240113121307",
+    // "IMG20240113121330",
+    // "IMG20240113121341",
+    // "IMG20240113121354",
     // "IMG20240113121410",
-    "IMG20240113121426",
-    "IMG20240113121438",
-    "IMG20240113121458",
-    "IMG20240113121510",
+    // "IMG20240113121426",
+    // "IMG20240113121438",
+    // "IMG20240113121458",
+    // "IMG20240113121510",
     ];
 
     file_names.into_par_iter().for_each(|file_name| { let _ = process(file_name); });
@@ -110,6 +114,8 @@ fn process(file_name: &str) -> Result<(), anyhow::Error> {
     let (contours, phase) = sub_process(&grey_phase, threshold)?;
     puzzle.original_contours = contours;
 
+    puzzle.rect = find_bounding_rect(&puzzle)?;
+
     let Ok((cx, cy)) = find_centroid(&puzzle) else { todo!() };
     puzzle.cx = cx;
     puzzle.cy = cy;
@@ -122,7 +128,6 @@ fn process(file_name: &str) -> Result<(), anyhow::Error> {
     puzzle.corners = corners;
 
     let _ = draw_simple_contour(&puzzle);
-
 
     puzzle.contours = split_contour(&grey_phase, &mut puzzle)?;
 
@@ -173,11 +178,11 @@ fn fill_poly(puzzle: &PuzzlePiece)-> Result<Mat, anyhow::Error> {
         black,
     ){
         Ok(_) => {},
-        Err(err) => println!("Error on fill_poly: {}", err)
+        Err(err) => println!("Error on fill_convex_poly: {}", err)
     }
 
-    let name = format!("./{}_fill_poly.jpg", puzzle.file_name);
-    cv::imgcodecs::imwrite(&name, &new_phase, &cv::core::Vector::default())?;
+    let name = format!("./{}fill_convex_poly.jpg", puzzle.file_name);
+    //cv::imgcodecs::imwrite(&name, &new_phase, &cv::core::Vector::default())?;
 
     Ok(new_phase)
 }
@@ -196,7 +201,7 @@ fn split_contour(grey_phase: &Mat, puzzle: &PuzzlePiece) -> Result<cv::types::Ve
 fn search_best_threshold(grey_phase: &Mat) -> Result<i32, Error> {
     let mut threshold = 0;
     let mut min_len = usize::MAX;
-    for threshold_value in 0..255 {
+    for threshold_value in 160..230 {
         let (contours_cv, phase) = sub_process(grey_phase, threshold_value)?;
 
         let mut len = 0;
@@ -205,17 +210,23 @@ fn search_best_threshold(grey_phase: &Mat) -> Result<i32, Error> {
             break;
         }
 
-        if  len > 1000 && len < min_len {
+        //println!("len: {} - min_len: {} - threshold: {} - threshold_value: {}", len, min_len, threshold, threshold_value);
+        //println!("{};{}", threshold_value, len);
+
+        //if  len > 4000 && len < min_len {
+        if len < min_len {
             min_len = len;
             threshold = threshold_value;
         }
-
     }
+
+    //println!("min_len: {} - threshold: {}", min_len, threshold);
+
     Ok(threshold)
 }
 
 fn blur(phase: &Mat) -> Result<Mat, anyhow::Error> {
-    let ksize = cv::core::Size::new(10,10);
+    let ksize = cv::core::Size::new(15,15);
     let mut new_phase = cv::core::Mat::default();
 
     cv::imgproc::blur_def (
@@ -231,6 +242,10 @@ fn sub_process(grey_phase: &Mat, threshold_value: i32) -> Result<(cv::types::Vec
     let phase = bitwise(&phase)?;
     let phase = morph(&phase)?;
     let contour_values = find_contour(&phase)?;
+
+    //cv::highgui::imshow("sub_process", &phase);
+    //cv::highgui::wait_key(500)?;
+
     Ok((contour_values, phase))
 }
 
@@ -250,27 +265,6 @@ fn find_centroid(puzzle: &PuzzlePiece) -> Result<(i32, i32), Error> {
         }
         break;
     }
-
-    // let mut new_phase = cv::core::Mat::default();
-    // new_phase = puzzle.original.clone();
-    // let color = cv::core::Scalar::new(0.0, 0.0, 255.0, 255.0);
-    // let point = Point::new(cx as i32, cy as i32);
-
-    // match cv::imgproc::circle (
-    //     &mut new_phase,
-    //     point,
-    //     20,
-    //     color,
-    //     cv::imgproc::FILLED,
-    //     cv::imgproc::LINE_8,
-    //     0
-    // ) {
-    //     Ok(_) => {},
-    //     Err(err) => { return Err(anyhow!(err));}
-    // }
-
-    // let name = format!("./{}_centroid.jpg", puzzle.file_name);
-    // cv::imgcodecs::imwrite(&name, &new_phase, &cv::core::Vector::default())?;
 
     Ok((cx as i32, cy as i32))
 }
@@ -317,6 +311,70 @@ fn get_polygon(puzzle: &PuzzlePiece, delta: i32, direction: Direction) -> cv::ty
     polygon
 }
 
+fn get_color() -> cv::core::Scalar {
+    let mut rng = rand::thread_rng();
+    let n1 = rng.gen_range(0.0..255.0);
+    let n2 = rng.gen_range(0.0..255.0);
+    let n3 = rng.gen_range(0.0..255.0);
+    cv::core::Scalar::new(n1, n2, n3, 255.0)
+}
+
+fn find_bounding_rect(puzzle: &PuzzlePiece) -> Result<cv::core::Rect, anyhow::Error> {
+    let mut rect = cv::core::Rect::default();
+    let mut contours = cv::types::VectorOfPoint::default();
+
+    for first in &puzzle.original_contours {
+        rect = match cv::imgproc::bounding_rect(&first) {
+            Ok(val) => {
+                val
+            },
+            Err(err) => {
+                println!("find_bounding_rect - file_name: {} - err: {}", puzzle.file_name, err);
+                return Err(anyhow!(err));
+            }
+        };
+        if rect.width != 0 {
+            break;
+        }
+    }
+/*
+    let mut phase = puzzle.original.clone();
+
+    dbg!(&rect);
+
+    let point1 = cv::core::Point::new(rect.x, rect.y);
+    let point2 = cv::core::Point::new(rect.x + rect.width, rect.y+rect.height);
+    cv::imgproc::rectangle_points_def(
+        &mut phase,
+        point1,
+        point2,
+        get_color()
+    )?;
+
+   /*  let zero_offset = cv::core::Point::new(0, 0);
+    let thickness: i32 = 20;
+
+    match cv::imgproc::draw_contours(&mut phase,
+        &contours,
+        -1,
+        get_color(),
+        thickness,
+        cv::imgproc::LINE_8,
+        &cv::core::no_array(),
+        2,
+        zero_offset){
+            Ok(_) => {},
+            Err(err) => {
+                println!("Error on draw_contours - {}", err);
+                return Err(anyhow!(err));
+            }
+        } */
+
+    cv::highgui::imshow("find_bounding_rec", &phase);
+*/
+    Ok(rect)
+}
+
 fn split_single_contour(puzzle: &PuzzlePiece, direction: Direction) -> std::io::Result<cv::types::VectorOfPoint> {
     let mut vector = cv::types::VectorOfPoint::new();
 
@@ -345,62 +403,142 @@ fn split_single_contour(puzzle: &PuzzlePiece, direction: Direction) -> std::io::
     Ok(vector)
 }
 
+fn find_corners_gui(puzzle: &PuzzlePiece, phase: &Mat) -> Result<cv::types::VectorOfPoint, anyhow::Error> {
+
+    let mut corners = cv::types::VectorOfPoint::new();
+    let mut max_corners = 4;
+    let mut quality_level = 0.1;
+    let mut min_distance = 1100.0;
+    let mut block_size: i32 = 100;
+    let use_harris_detector: bool = true;
+    let mut k: f64 = 0.1;
+
+    match cv::imgproc::good_features_to_track(
+        &phase,
+        &mut corners,
+        max_corners,
+        quality_level,
+        min_distance,
+        &cv::core::no_array(),
+        block_size,
+        use_harris_detector,
+        k
+    ){
+        Ok(_) => {},
+        Err(err) => println!("Error on find_corners (block_size {}): {} with ", block_size, err)
+    };
+
+    Ok(corners)
+}
+
 fn find_corners(puzzle: &PuzzlePiece, phase: &Mat)-> Result<cv::types::VectorOfPoint, anyhow::Error> {
 
     let mut corners = cv::types::VectorOfPoint::new();
-    let max_corners = 4;
-    let quality_level = 0.1;
-    let min_distance = 1300.0;
+    let mut max_corners = 4;
+    let mut quality_level = 0.1;
+    let mut min_distance = 1300.0;
     let mask = &puzzle.original_contours;
     let mut block_size: i32 = 100;
-    let use_harris_detector: bool = false;
-    let k: f64 = 0.1;
+    let use_harris_detector: bool = true;
+    let mut k: f64 = 0.1;
 
+    let mut last_min_distance = 0.0;
+    let mut last_block_size = 0;
+    let mut last_quality_level = 0.0;
+    let mut last_max_corners = 0;
+    let mut last_k = 0.0;
+
+    cv::highgui::imshow("Phase", &phase);
+
+    let mut output = String::new();
     loop {
-        match cv::imgproc::good_features_to_track(
-            &phase,
-            &mut corners,
-            max_corners,
-            quality_level,
-            min_distance,
-            &cv::core::no_array(),
-            block_size,
-            use_harris_detector,
-            k
-        ){
-            Ok(_) => {},
-            Err(err) => println!("Error on find_corners: {}", err)
+
+        if last_min_distance != min_distance 
+            || last_block_size != block_size 
+            || last_quality_level != quality_level 
+            || last_max_corners != max_corners 
+            || last_k != k {
+            last_min_distance = min_distance;
+            last_block_size = block_size;
+            last_quality_level = quality_level;
+            last_max_corners = max_corners;
+            last_k = k;
+
+            println!("min_distance: {} - block_size: {} - quality_level: {} - max_corners: {} - k: {}", min_distance, block_size, quality_level, max_corners, k);
+
+            match cv::imgproc::good_features_to_track(
+                &phase,
+                &mut corners,
+                max_corners,
+                quality_level,
+                min_distance,
+                &cv::core::no_array(),
+                block_size,
+                use_harris_detector,
+                k
+            ){
+                Ok(_) => {},
+                Err(err) => println!("Error on find_corners (block_size {}): {} with ", block_size, err)
+            }
+
+            let mut new_phase = cv::core::Mat::default();
+            new_phase = puzzle.original.clone();
+            let color = cv::core::Scalar::new(0.0, 0.0, 255.0, 255.0);
+
+            for point in corners.iter() {
+                cv::imgproc::circle (
+                    &mut new_phase,
+                    point,
+                    20,
+                    color,
+                    cv::imgproc::FILLED,
+                    cv::imgproc::LINE_8,
+                    0
+                )?;
+            }
+
+            let zero_offset = cv::core::Point::new(0, 0);
+            let thickness: i32 = 20;
+        
+            // cv::imgproc::draw_contours(&mut new_phase,
+            //     &puzzle.original_contours,
+            //     -1,
+            //     color,
+            //     thickness,
+            //     cv::imgproc::LINE_8,
+            //     &cv::core::no_array(),
+            //     2,
+            //     zero_offset)?;
+
+            cv::highgui::imshow("Corner", &new_phase);
         }
+        
+        let key = cv::highgui::wait_key(500)?;
 
-        if corners.len() == 4 {
-            // let mut new_phase = cv::core::Mat::default();
-            // new_phase = puzzle.original.clone();
-            // let color = cv::core::Scalar::new(0.0, 0.0, 255.0, 255.0);
+        match key {
+            27 => break,
+            66 => block_size += 1, // B
+            98 => block_size -= 1, // b
 
-            // for point in corners.iter() {
-            //     cv::imgproc::circle (
-            //         &mut new_phase,
-            //         point,
-            //         20,
-            //         color,
-            //         cv::imgproc::FILLED,
-            //         cv::imgproc::LINE_8,
-            //         0
-            //     )?;
-            // }
+            51 => min_distance += 1.0, // 1
+            52 => min_distance -= 1.0, // 2
 
-            // let name = format!("./{}_find_corners.jpg", puzzle.file_name);
-            // cv::imgcodecs::imwrite(&name, &new_phase, &cv::core::Vector::default())?;
-            break;
-        }
-        block_size += 1;
+            68 => min_distance += 10.0, // D
+            100 => min_distance -= 10.0, // d
 
-        //cv::highgui::wait_key(300);
-        //println!("block_size: {}", block_size);
+            81 => quality_level += 0.1, // Q
+            113 => quality_level -= 0.1, // q
 
-        if block_size > 150 {
-            println!("Exit from find_corners for {}.jpg", puzzle.file_name);
-            break;
+            67 => max_corners += 1, // C
+            99 => max_corners -= 1, // c
+
+            75 => k += 0.1, // K
+            107 => k -= 0.1, // k
+            _ => {
+                if key != -1 {
+                    println!("Key: {}", key);
+                }
+            }
         }
     }
 
@@ -475,6 +613,7 @@ fn draw_contour(puzzle: &PuzzlePiece) -> Result<(), anyhow::Error> {
 
     let mut rng = rand::thread_rng();
 
+    // Disegna i 4 contorni con colori diversi
     for index in 0..puzzle.contours.len() {
         let n1 = rng.gen_range(0.0..255.0);
         let n2 = rng.gen_range(0.0..255.0);
@@ -491,12 +630,13 @@ fn draw_contour(puzzle: &PuzzlePiece) -> Result<(), anyhow::Error> {
             zero_offset){
                 Ok(_) => {},
                 Err(err) => {
-                    println!("Error on draw_contours - index {}: {}", index, err);
+                    println!("Error on draw_contours - file_name: {} - index {}: {}", puzzle.file_name, index, err);
                     return Err(anyhow!(err));
                 }
             }
     }
 
+    // Disegna l'area con cui ha calcolato se il contorno e dentro il poligono oppure no
     for dir in Direction::iter() {
         let n1 = rng.gen_range(0.0..255.0);
         let n2 = rng.gen_range(0.0..255.0);
@@ -510,6 +650,20 @@ fn draw_contour(puzzle: &PuzzlePiece) -> Result<(), anyhow::Error> {
             true,
             cv::core::Scalar::new(255.0, 0.0, 0.0, 255.0),
             10,
+            cv::imgproc::LINE_8,
+            0
+        )?;
+    }
+
+    // Disegna i 4 angoli
+    let color = cv::core::Scalar::new(0.0, 0.0, 255.0, 255.0);
+    for point in puzzle.corners.iter() {
+        cv::imgproc::circle (
+            &mut phase,
+            point,
+            20,
+            color,
+            cv::imgproc::FILLED,
             cv::imgproc::LINE_8,
             0
         )?;
@@ -552,6 +706,7 @@ fn draw_simple_contour(puzzle: &PuzzlePiece) -> Result<(), anyhow::Error> {
             break;
     }
 
+    // Disegna gli angoli
     let color = cv::core::Scalar::new(0.0, 0.0, 255.0, 255.0);
     for point in puzzle.corners.iter() {
         cv::imgproc::circle (
@@ -565,6 +720,7 @@ fn draw_simple_contour(puzzle: &PuzzlePiece) -> Result<(), anyhow::Error> {
         )?;
     }
 
+    // Disegna il centro
     let point = Point::new(puzzle.cx, puzzle.cy);
     cv::imgproc::circle (
         &mut phase,
@@ -577,20 +733,28 @@ fn draw_simple_contour(puzzle: &PuzzlePiece) -> Result<(), anyhow::Error> {
     )?;
     
     let name = format!("./{}_simple_contours.jpg", puzzle.file_name);
-    cv::imgcodecs::imwrite(&name, &phase, &cv::core::Vector::default())?;
+    //cv::imgcodecs::imwrite(&name, &phase, &cv::core::Vector::default())?;
 
     Ok(())
 }
 
 fn find_contour(phase: &Mat) -> Result<cv::types::VectorOfVectorOfPoint, anyhow::Error> {
+    let mut original_contour_values = cv::types::VectorOfVectorOfPoint::new();
     let mut contour_values = cv::types::VectorOfVectorOfPoint::new();
     cv::imgproc::find_contours(
         &phase, 
-        &mut contour_values, 
+        &mut original_contour_values, 
         cv::imgproc:: RETR_TREE,
         cv::imgproc::CHAIN_APPROX_SIMPLE,
         cv::core::Point::new(0, 0),
     )?;
+
+    for first in original_contour_values {
+        if first.len() >= 1000 {
+            contour_values.push(first);
+            break;
+        }
+    }
 
     Ok(contour_values)
 }
