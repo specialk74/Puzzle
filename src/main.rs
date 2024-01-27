@@ -12,8 +12,9 @@ use rand::Rng;
 use strum::{EnumIter, IntoEnumIterator};
 use opencv::types::VectorOfPoint;
 use opencv::types::VectorOfVectorOfPoint;
+use itertools::Itertools;
 
-#[derive(EnumIter, Debug, Hash, Eq, PartialEq, Clone)]
+#[derive(EnumIter, Debug, Hash, Eq, PartialEq, Clone, Copy)]
 enum Direction {
     UpSide,
     DownSide,
@@ -21,9 +22,15 @@ enum Direction {
     LeftSide
 }
 
+struct ContourWithDir {
+    countour: VectorOfPoint,
+    dir: Direction
+}
+
 struct PuzzlePiece {
     file_name: String,
     contours: VectorOfVectorOfPoint,
+    contours_with_dir: Vec<ContourWithDir>,
 
     x_min: Point,
     y_min: Point,
@@ -48,6 +55,7 @@ struct PuzzlePiece {
     center: Point,
 
     polygon: HashMap<Direction, VectorOfPoint>,
+    matched: bool,
 }
 
 impl PuzzlePiece {
@@ -55,6 +63,7 @@ impl PuzzlePiece {
         Self {
             file_name: "puzzle".to_string(),
             contours: VectorOfVectorOfPoint::default(),
+            contours_with_dir: Vec::new(),
 
             x_min: Point::new(i32::MAX,0),
             y_min: Point::new(0,i32::MAX),
@@ -79,6 +88,17 @@ impl PuzzlePiece {
             threshold: 0,
             center: Point::new(0,0),
             polygon: HashMap::new(),
+
+            matched: false,
+        }
+    }
+}
+
+impl ContourWithDir {
+    fn new (countour: VectorOfPoint, dir: Direction) -> Self {
+        Self { 
+            countour,
+            dir
         }
     }
 }
@@ -90,22 +110,22 @@ Ok(())
 
 fn my_contour() -> Result<(), anyhow::Error> {
     let file_names = vec![
-    "IMG20240113121213", 
-    "IMG20240113121228", 
-    "IMG20240113121241",
-    "IMG20240113121256",
-    "IMG20240113121307",
-    "IMG20240113121330",
-    "IMG20240113121341",
-    "IMG20240113121354",
+    // "IMG20240113121213", 
+    // "IMG20240113121228", 
+    // "IMG20240113121241",
+    // "IMG20240113121256",
+    // "IMG20240113121307",
+    // "IMG20240113121330",
+    // "IMG20240113121341",
+    // "IMG20240113121354",
     "IMG20240113121410",
     "IMG20240113121426",
     "IMG20240113121438",
-    "IMG20240113121458",
-    "IMG20240113121510",
+    // "IMG20240113121458",
+    // "IMG20240113121510",
     ];
 
-    let puzzles: Vec<PuzzlePiece> = file_names
+    let mut puzzles: Vec<PuzzlePiece> = file_names
         .into_par_iter()
         .map(|file_name| { 
             process(file_name).unwrap()
@@ -113,10 +133,8 @@ fn my_contour() -> Result<(), anyhow::Error> {
         .collect();
     // file_names.into_iter().for_each(|file_name| { process(file_name); });
 
-    for puzzle1 in puzzles.iter() {
-        for puzzle2 in puzzles.iter() {
-            match_shapes(puzzle1, puzzle2)?;
-        }
+    for (element1, element2) in puzzles.iter().tuple_combinations() {
+        match_shapes(element1, element2)?;
     }
 
     Ok(())
@@ -204,7 +222,7 @@ fn process(file_name: &str) -> Result<PuzzlePiece, anyhow::Error> {
 
     let _ = draw_simple_contour(&puzzle);
 
-    puzzle.contours = split_contour(&mut puzzle)?;
+    (puzzle.contours, puzzle.contours_with_dir) = split_contour(&mut puzzle)?;
 
     //write_contour(&puzzle)?;
     draw_contour(&puzzle)?;
@@ -294,15 +312,17 @@ fn fill_poly(puzzle: &PuzzlePiece)-> Result<Mat, anyhow::Error> {
     Ok(new_phase)
 }
 
-fn split_contour(puzzle: &mut PuzzlePiece) -> Result<VectorOfVectorOfPoint, Error> {
+fn split_contour(puzzle: &mut PuzzlePiece) -> Result<(VectorOfVectorOfPoint, Vec<ContourWithDir>), Error> {
     let mut contour_values = VectorOfVectorOfPoint::new();
+    let mut contour_values_with_dir = Vec::new();
 
     for dir in Direction::iter() {
         let single_contours = split_single_contour(puzzle, dir)?;
+        contour_values_with_dir.push(ContourWithDir::new(single_contours.clone(), dir));
         contour_values.push(single_contours);
     }
     
-    Ok(contour_values)
+    Ok((contour_values, contour_values_with_dir))
 }
 
 fn search_best_threshold(grey_phase: &Mat) -> Result<i32, Error> {
@@ -959,18 +979,63 @@ fn threshold(phase: &Mat, threshold_value: i32) -> Result<Mat, anyhow::Error> {
 }
 
 fn match_shapes(puzzle1: &PuzzlePiece, puzzle2: &PuzzlePiece) -> Result<(), anyhow::Error>{
-    let method = 0;
+    //println!("match_shapes between {} and {}", puzzle1.file_name, puzzle2.file_name);
+    println!("{}-{}", puzzle1.file_name, puzzle2.file_name);
+    fill_only_contour(puzzle1, &puzzle2)?;
+    let mut count = 0;
+    for sequence1 in &puzzle1.contours_with_dir {
+        for sequence2 in &puzzle2.contours_with_dir {
+            //dbg!(sequence1.dir, sequence2.dir, count);
+            print!("{:?}-{:?};", sequence1.dir, sequence2.dir);
+            for method in 1..4 {
+                let m = cv::imgproc::match_shapes(
+                    &sequence1.countour,
+                    &sequence2.countour,
+                    method,
+                    1.0
+                )?;
+                //dbg!(m, method);
+                print!("{};", m);
+            }
+            count += 1;
+            print!("\n");
+        }
+    }
 
-    let contour1 = VectorOfPoint::new();
-    let contour2 = VectorOfPoint::new();
+    Ok(())
+}
 
-    let m = cv::imgproc::match_shapes(
-        &contour1,
-        &contour2,
-        method,
-        1.0
-    )?;
-    dbg!(m);
+fn fill_only_contour(puzzle1: &PuzzlePiece, puzzle2: &PuzzlePiece)-> Result<(), anyhow::Error> {
+    for sequence1 in &puzzle1.contours_with_dir {
+        for sequence2 in &puzzle2.contours_with_dir {
+            //dbg!(sequence1.dir, sequence2.dir, count);
+            print!("{:?}-{:?};", sequence1.dir, sequence2.dir);
+                let mut new_phase = cv::core::Mat::new_size_with_default(
+                    puzzle1.original_image.size()?,
+                    cv::core::CV_32FC1,
+                    get_black_color(), 
+                )?;
+
+                match cv::imgproc::fill_poly_def(
+                    &mut new_phase,
+                    &sequence1.countour,
+                    get_white_color(),
+                ){
+                    Ok(_) => {},
+                    Err(err) => println!("Error on fill_convex_poly: {}", err)
+                }
+                match cv::imgproc::fill_poly_def(
+                    &mut new_phase,
+                    &sequence2.countour,
+                    get_white_color(),
+                ){
+                    Ok(_) => {},
+                    Err(err) => println!("Error on fill_convex_poly: {}", err)
+                }
+                show_image("fill_only_contour", &new_phase);
+                wait_key(0);
+        }
+    }
 
     Ok(())
 }
