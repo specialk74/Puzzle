@@ -2,6 +2,7 @@ use anyhow::Error;
 use anyhow::anyhow;
 use anyhow::Result;
 use opencv::{self as cv, prelude::*};
+use rand::seq;
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
 use std::collections::HashMap;
@@ -22,9 +23,18 @@ enum Direction {
     LeftSide
 }
 
+#[derive(EnumIter, Debug, Hash, Eq, PartialEq, Clone, Copy)]
+enum Genders {
+    Unknown,
+    Female,
+    Male,
+    Line
+}
+
 struct ContourWithDir {
     countour: VectorOfPoint,
-    dir: Direction
+    dir: Direction,
+    gender: Genders,
 }
 
 struct PuzzlePiece {
@@ -95,10 +105,11 @@ impl PuzzlePiece {
 }
 
 impl ContourWithDir {
-    fn new (countour: VectorOfPoint, dir: Direction) -> Self {
+    fn new (countour: VectorOfPoint, dir: Direction, gender: Genders) -> Self {
         Self { 
             countour,
-            dir
+            dir,
+            gender,
         }
     }
 }
@@ -312,13 +323,238 @@ fn fill_poly(puzzle: &PuzzlePiece)-> Result<Mat, anyhow::Error> {
     Ok(new_phase)
 }
 
+fn distance_between_points(point1: &Point, point2: &Point) -> Result<u32, anyhow::Error> {
+    let mut points = VectorOfPoint::default();
+    points.push(point1.clone());
+    points.push(point2.clone());
+
+    let num1 = (point1.x - point2.x).abs().pow(2) as f64;
+    let num2 = (point1.y - point2.y).abs().pow(2) as f64;
+    let num3 = (num1 + num2).sqrt();
+    //dbg!(num3);
+    //println!("Diff: {:?}", ((point1.x - point2.x).abs().pow(2.0) + (point1.y - point2.y).abs().pow(2.0)).sqrt());
+
+    //Ok(cv::core::norm_def(&points)?)
+    Ok(num3 as u32)
+}
+
+fn get_gender(puzzle: &PuzzlePiece, direction: Direction, contour: &VectorOfPoint) -> Result<Genders, Error> {
+    let mut gender = Genders::Unknown;
+
+    let convex = cv::imgproc::bounding_rect(contour)?;
+    // println!("{} - {:?} - bounding_rect: {:?}",puzzle.file_name, direction, convex);
+
+    match direction {
+        Direction::DownSide => {
+            let mut max_corner = 0;
+            if puzzle.left_down_corner.y > puzzle.right_down_corner.y {
+                max_corner = puzzle.left_down_corner.y;
+            }
+            else {
+                max_corner = puzzle.right_down_corner.y;
+            }
+
+            if puzzle.y_max.y - max_corner > 100 {
+                gender = Genders::Male;
+            }
+            else if convex.width < 200 || convex.height < 200 {
+                gender = Genders::Line;
+                // let max_value = vec![
+                //     distance_between_points(&puzzle.left_down_corner, &Point::new(convex.x, convex.y))?,
+                //     distance_between_points(&puzzle.left_down_corner, &Point::new(convex.x, convex.y + convex.height))?,
+                //     distance_between_points(&puzzle.right_down_corner, &Point::new(convex.x + convex.width, convex.y))?,
+                //     distance_between_points(&puzzle.right_down_corner, &Point::new(convex.x + convex.width, convex.y + convex.height))?
+                //     ];
+                //     dbg!(&max_value);
+                //     match max_value.iter().max() {
+                //     Some(val) => {
+                //         if val > &150 {
+                //             gender = Genders::Female;
+                //         }
+                //         else {
+                //             gender = Genders::Line;
+                //         }
+                //     },
+                //     None => {}
+                // }
+            }
+            else {
+                gender = Genders::Female;
+            }
+
+
+/*             println!("{} - direction: {:?} - LD: {:?} - RD: {:?} - gender: {:?} - diff: {:?} - {:?} - {:?} - {:?}", puzzle.file_name, direction,
+            puzzle.left_down_corner,
+            puzzle.right_down_corner,
+            gender,
+            distance_between_points(&puzzle.left_down_corner, &Point::new(convex.x, convex.y)),
+            distance_between_points(&puzzle.left_down_corner, &Point::new(convex.x, convex.y + convex.height)),
+            distance_between_points(&puzzle.right_down_corner, &Point::new(convex.x + convex.width, convex.y)),
+            distance_between_points(&puzzle.right_down_corner, &Point::new(convex.x + convex.width, convex.y + convex.height))
+            ); */
+        },
+        Direction::LeftSide => {
+            let mut max_corner = 0;
+            if puzzle.left_down_corner.x > puzzle.left_up_corner.x {
+                max_corner = puzzle.left_up_corner.x;
+            }
+            else {
+                max_corner = puzzle.left_down_corner.x;
+            }
+
+            if max_corner - puzzle.x_min.x > 100 {
+                gender = Genders::Male;
+            }
+            else if convex.width < 200 || convex.height < 200 {
+                gender = Genders::Line;
+
+                // let max_value = vec![
+                //     distance_between_points(&puzzle.left_up_corner, &Point::new(convex.x, convex.y))?,
+                //     distance_between_points(&puzzle.left_up_corner, &Point::new(convex.x+ convex.width, convex.y))?,
+                //     distance_between_points(&puzzle.left_down_corner, &Point::new(convex.x, convex.y + convex.height))?,
+                //     distance_between_points(&puzzle.left_down_corner, &Point::new(convex.x + convex.width, convex.y + convex.height))?,
+                //     ];
+                //     dbg!(&max_value);
+
+                //     match max_value.iter().max() {
+                //     Some(val) => {
+                //         if val > &150 {
+                //             gender = Genders::Female;
+                //         }
+                //         else {
+                //             gender = Genders::Line;
+                //         }
+                //     },
+                //     None => {}
+                // }
+            }
+            else {
+                gender = Genders::Female;
+            }
+
+            /*             println!("{} - direction: {:?} - LD: {:?} - LU: {:?} - gender: {:?} - diff: {:?} - {:?} - {:?} - {:?}", puzzle.file_name, direction,
+            puzzle.left_down_corner,
+            puzzle.left_up_corner,
+            gender,
+            distance_between_points(&puzzle.left_up_corner, &Point::new(convex.x, convex.y)),
+            distance_between_points(&puzzle.left_up_corner, &Point::new(convex.x+ convex.width, convex.y)),
+            distance_between_points(&puzzle.left_down_corner, &Point::new(convex.x, convex.y + convex.height)),
+            distance_between_points(&puzzle.left_down_corner, &Point::new(convex.x + convex.width, convex.y + convex.height)),
+            ); */
+        },
+        Direction::RightSide => {
+            let mut max_corner = 0;
+            if puzzle.right_up_corner.x > puzzle.right_down_corner.x {
+                max_corner = puzzle.right_up_corner.x;
+            }
+            else {
+                max_corner = puzzle.right_down_corner.x;
+            }
+
+            if puzzle.x_max.x - max_corner > 100 {
+                gender = Genders::Male;
+            }
+            else if convex.width < 200 || convex.height < 200 {
+                gender = Genders::Line;
+                // let max_value = vec![
+                //     distance_between_points(&puzzle.right_up_corner, &Point::new(convex.x, convex.y))?,
+                //     distance_between_points(&puzzle.right_up_corner, &Point::new(convex.x+ convex.width, convex.y))?,
+                //     distance_between_points(&puzzle.right_down_corner, &Point::new(convex.x, convex.y + convex.height))?,
+                //     distance_between_points(&puzzle.right_down_corner, &Point::new(convex.x + convex.width, convex.y + convex.height))?
+                //     ];
+                //     dbg!(&max_value);
+
+                //     match max_value.iter().max() {
+                //     Some(val) => {
+                //         if val > &150 {
+                //             gender = Genders::Female;
+                //         }
+                //         else {
+                //             gender = Genders::Line;
+                //         }
+                //     },
+                //     None => {}
+                // }
+            }
+            else {
+                gender = Genders::Female;
+            }
+
+                /*       
+            println!("{} - direction: {:?} - RU: {:?} - RD: {:?} - gender: {:?} - diff: {:?} - {:?} - {:?} - {:?}", puzzle.file_name, direction,
+            puzzle.right_up_corner,
+            puzzle.right_down_corner,
+            gender,
+            distance_between_points(&puzzle.right_up_corner, &Point::new(convex.x, convex.y)),
+            distance_between_points(&puzzle.right_up_corner, &Point::new(convex.x+ convex.width, convex.y)),
+            distance_between_points(&puzzle.right_down_corner, &Point::new(convex.x, convex.y + convex.height)),
+            distance_between_points(&puzzle.right_down_corner, &Point::new(convex.x + convex.width, convex.y + convex.height))
+            );
+            */
+        },
+        Direction::UpSide => {
+            let mut max_corner = 0;
+            if puzzle.left_up_corner.y > puzzle.right_up_corner.y {
+                max_corner = puzzle.right_up_corner.y;
+            }
+            else {
+                max_corner = puzzle.left_up_corner.y;
+            }
+
+            if max_corner - puzzle.y_min.y > 100 {
+                gender = Genders::Male;
+            }
+            else if convex.width < 200 || convex.height < 200 {
+                gender = Genders::Line;
+                // let max_value = vec![
+                //     distance_between_points(&Point::new(convex.x, convex.y), &puzzle.left_up_corner)?,
+                //     distance_between_points(&puzzle.left_up_corner, &Point::new(convex.x, convex.y + convex.height))?,
+                //     distance_between_points(&puzzle.right_up_corner, &Point::new(convex.x + convex.width, convex.y))?,
+                //     distance_between_points(&puzzle.right_up_corner, &Point::new(convex.x + convex.width, convex.y + convex.height))?
+                // ];
+                // dbg!(&max_value);
+
+                //     match max_value.iter().max() {
+                //     Some(val) => {
+                //         if val > &100 {
+                //             gender = Genders::Female;
+                //         }
+                //         else {
+                //             gender = Genders::Line;
+                //         }
+                //     },
+                //     None => {}
+                // }
+            }
+            else {
+                gender = Genders::Female;
+            }
+            /* 
+            println!("{} - direction: {:?} - LU: {:?} - RU: {:?} - gender: {:?} - diff: {:?} - {:?} - {:?} - {:?}", puzzle.file_name, direction,
+            puzzle.left_up_corner,
+            puzzle.right_up_corner,
+            gender,
+            distance_between_points(&Point::new(convex.x, convex.y), &puzzle.left_up_corner),
+            distance_between_points(&puzzle.left_up_corner, &Point::new(convex.x, convex.y + convex.height)),
+            distance_between_points(&puzzle.right_up_corner, &Point::new(convex.x + convex.width, convex.y)),
+            distance_between_points(&puzzle.right_up_corner, &Point::new(convex.x + convex.width, convex.y + convex.height))
+            );
+            */
+        }
+    }
+    // println!("{} - direction: {:?} - gender: {:?}",&puzzle.file_name, direction, gender);
+    Ok(gender)
+}
+
+
 fn split_contour(puzzle: &mut PuzzlePiece) -> Result<(VectorOfVectorOfPoint, Vec<ContourWithDir>), Error> {
     let mut contour_values = VectorOfVectorOfPoint::new();
     let mut contour_values_with_dir = Vec::new();
 
     for dir in Direction::iter() {
         let single_contours = split_single_contour(puzzle, dir)?;
-        contour_values_with_dir.push(ContourWithDir::new(single_contours.clone(), dir));
+        let gender = get_gender(puzzle, dir, &single_contours)?;
+        contour_values_with_dir.push(ContourWithDir::new(single_contours.clone(), dir, gender));
         contour_values.push(single_contours);
     }
     
@@ -429,7 +665,6 @@ fn get_polygon(puzzle: &PuzzlePiece, delta: i32, direction: &Direction, iteratio
                 puzzle.right_down_corner.y + (puzzle.y_max.y - puzzle.right_down_corner.y) + delta));
             polygon.push(puzzle.right_down_corner.clone());
             polygon.push(mid2_down);
-
             //println!("Direction: {:?} - Point1: {:?} - Point2: {:?}", direction, puzzle.left_down_corner, puzzle.right_down_corner);
         },
         Direction::UpSide => {
@@ -545,7 +780,7 @@ fn find_bounding_rect(puzzle: &PuzzlePiece, _original_image: &Mat, contour: &Vec
     Ok(rect)
 }
 
-fn split_single_contour(puzzle: &mut PuzzlePiece, direction: Direction) -> std::io::Result<VectorOfPoint> {
+fn split_single_contour(puzzle: &mut PuzzlePiece, direction: Direction) -> Result<VectorOfPoint, Error> {
     let mut vector = VectorOfPoint::new();
 
     //print!("{} -> Start -> {:?} -> ", puzzle.file_name, direction);
@@ -981,24 +1216,39 @@ fn threshold(phase: &Mat, threshold_value: i32) -> Result<Mat, anyhow::Error> {
 fn match_shapes(puzzle1: &PuzzlePiece, puzzle2: &PuzzlePiece) -> Result<(), anyhow::Error>{
     //println!("match_shapes between {} and {}", puzzle1.file_name, puzzle2.file_name);
     println!("{}-{}", puzzle1.file_name, puzzle2.file_name);
-    fill_only_contour(puzzle1, &puzzle2)?;
+    //fill_only_contour(puzzle1, &puzzle2)?;
     let mut count = 0;
+    let mut print = false;
     for sequence1 in &puzzle1.contours_with_dir {
         for sequence2 in &puzzle2.contours_with_dir {
-            //dbg!(sequence1.dir, sequence2.dir, count);
-            print!("{:?}-{:?};", sequence1.dir, sequence2.dir);
-            for method in 1..4 {
-                let m = cv::imgproc::match_shapes(
-                    &sequence1.countour,
-                    &sequence2.countour,
-                    method,
-                    1.0
-                )?;
-                //dbg!(m, method);
-                print!("{};", m);
+            print = false;
+            //print!("{:?}-{:?}", sequence1.dir, sequence2.dir);
+            if sequence1.gender != Genders::Line && sequence2.gender != Genders::Line && sequence1.gender != sequence2.gender {
+                print = true;
+                print!("{:?}-{:?}", sequence1.dir, sequence2.dir);
+                //dbg!(sequence1.dir, sequence2.dir, count);
+                for method in 1..4 {
+                    let m = cv::imgproc::match_shapes(
+                        &sequence1.countour,
+                        &sequence2.countour,
+                        method,
+                        1.0
+                    )?;
+                    //dbg!(m, method);
+                    //println!("{:?} - {:?} - {:?}", sequence1.dir, sequence2.dir, m);
+                    print!(" {};", m);
+                }
+            }
+            else if sequence1.gender == Genders::Line || sequence2.gender == Genders::Line {
+                // print!(" - One gender is {:?} or {:?}", sequence1.gender, sequence2.gender);
+            }
+            else {
+                // print!(" - Same gender {:?}", sequence1.gender);
             }
             count += 1;
-            print!("\n");
+            if print {
+                print!("\n");
+            }
         }
     }
 
