@@ -2,8 +2,8 @@ use anyhow::Error;
 use anyhow::anyhow;
 use anyhow::Result;
 use opencv::{self as cv, prelude::*};
-use rand::seq;
-use rand::seq::index;
+//use rand::seq;
+//use rand::seq::index;
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
 use std::collections::HashMap;
@@ -37,6 +37,9 @@ struct ContourWithDir {
     countour_traslated: VectorOfPoint,
     dir: Direction,
     gender: Genders,
+    x_max: i32,
+    y_min: i32,
+    y_max: i32
 }
 
 struct PuzzlePiece {
@@ -107,12 +110,15 @@ impl PuzzlePiece {
 }
 
 impl ContourWithDir {
-    fn new (countour: VectorOfPoint, dir: Direction, gender: Genders, countour_traslated: VectorOfPoint) -> Self {
+    fn new (countour: VectorOfPoint, dir: Direction, gender: Genders, countour_traslated: VectorOfPoint, x_max: i32, y_min: i32, y_max: i32) -> Self {
         Self { 
             countour,
             dir,
             gender,
             countour_traslated,
+            x_max,
+            y_min, 
+            y_max
         }
     }
 }
@@ -139,7 +145,7 @@ fn my_contour() -> Result<(), anyhow::Error> {
     // "IMG20240113121510",
     ];
 
-    let mut puzzles: Vec<PuzzlePiece> = file_names
+    let puzzles: Vec<PuzzlePiece> = file_names
         .into_par_iter()
         .map(|file_name| { 
             process(file_name).unwrap()
@@ -342,14 +348,14 @@ fn distance_between_points(point1: &Point, point2: &Point) -> Result<u32, anyhow
 }
 
 fn get_gender(puzzle: &PuzzlePiece, direction: Direction, contour: &VectorOfPoint) -> Result<Genders, Error> {
-    let mut gender = Genders::Unknown;
+    let gender;
 
     let convex = cv::imgproc::bounding_rect(contour)?;
     // println!("{} - {:?} - bounding_rect: {:?}",puzzle.file_name, direction, convex);
 
     match direction {
         Direction::DownSide => {
-            let mut max_corner = 0;
+            let max_corner;
             if puzzle.left_down_corner.y > puzzle.right_down_corner.y {
                 max_corner = puzzle.left_down_corner.y;
             }
@@ -397,7 +403,7 @@ fn get_gender(puzzle: &PuzzlePiece, direction: Direction, contour: &VectorOfPoin
             ); */
         },
         Direction::LeftSide => {
-            let mut max_corner = 0;
+            let max_corner;
             if puzzle.left_down_corner.x > puzzle.left_up_corner.x {
                 max_corner = puzzle.left_up_corner.x;
             }
@@ -446,7 +452,7 @@ fn get_gender(puzzle: &PuzzlePiece, direction: Direction, contour: &VectorOfPoin
             ); */
         },
         Direction::RightSide => {
-            let mut max_corner = 0;
+            let max_corner;
             if puzzle.right_up_corner.x > puzzle.right_down_corner.x {
                 max_corner = puzzle.right_up_corner.x;
             }
@@ -496,7 +502,7 @@ fn get_gender(puzzle: &PuzzlePiece, direction: Direction, contour: &VectorOfPoin
             */
         },
         Direction::UpSide => {
-            let mut max_corner = 0;
+            let max_corner;
             if puzzle.left_up_corner.y > puzzle.right_up_corner.y {
                 max_corner = puzzle.right_up_corner.y;
             }
@@ -555,9 +561,9 @@ fn split_contour(puzzle: &mut PuzzlePiece) -> Result<(VectorOfVectorOfPoint, Vec
     let mut contour_values_with_dir = Vec::new();
 
     for dir in Direction::iter() {
-        let (single_contours, countour_traslated) = split_single_contour(puzzle, dir)?;
+        let (single_contours, countour_traslated, x_max, y_min, y_max) = split_single_contour(puzzle, dir)?;
         let gender = get_gender(puzzle, dir, &single_contours)?;
-        contour_values_with_dir.push(ContourWithDir::new(single_contours.clone(), dir, gender, countour_traslated));
+        contour_values_with_dir.push(ContourWithDir::new(single_contours.clone(), dir, gender, countour_traslated, x_max, y_min, y_max));
         contour_values.push(single_contours);
     }
     
@@ -783,7 +789,7 @@ fn find_bounding_rect(puzzle: &PuzzlePiece, _original_image: &Mat, contour: &Vec
     Ok(rect)
 }
 
-fn split_single_contour(puzzle: &mut PuzzlePiece, direction: Direction) -> Result<(VectorOfPoint, VectorOfPoint), Error> {
+fn split_single_contour(puzzle: &mut PuzzlePiece, direction: Direction) -> Result<(VectorOfPoint, VectorOfPoint, i32, i32, i32), Error> {
     let mut vector = VectorOfPoint::new();
 
     //print!("{} -> Start -> {:?} -> ", puzzle.file_name, direction);
@@ -833,10 +839,10 @@ fn split_single_contour(puzzle: &mut PuzzlePiece, direction: Direction) -> Resul
 
     //println!("{} - {:?} - {:?}:{:?}", puzzle.file_name, direction, vector.get(0)?, vector.get(vector.len() - 1)?);
 
-    let (up_left_point, down_right_point) = get_extreme(direction, &vector)?;
+    let (up_left_point, _down_right_point) = get_extreme(direction, &vector)?;
 
     let mut vector_after_first_traslate = VectorOfPoint::new();
-    for mut point in vector.iter() {
+    for point in vector.iter() {
         vector_after_first_traslate.push(point - up_left_point);
     }
 
@@ -886,7 +892,27 @@ fn split_single_contour(puzzle: &mut PuzzlePiece, direction: Direction) -> Resul
         vector_traslated = vector_rotated.clone();
     }
 
-    Ok((vector, vector_traslated))
+    let mut x_max = 0;
+    let mut y_min = i32::MAX;
+    let mut y_max = 0;
+
+    for point in vector_traslated.iter() {
+        if point.x > x_max {
+            x_max = point.x;
+        }
+        if point.y < y_min {
+            y_min = point.y;
+        }
+        if point.y > y_max {
+            y_max = point.y;
+        }
+    }
+
+    /* if y_min.abs() > 100 || y_max.abs() > 100 {
+        println!("{} - {:?} - {}, {}, {} - {}",puzzle.file_name, direction, x_max, y_min, y_max, y_max - y_min);
+    } */
+
+    Ok((vector, vector_traslated, x_max, y_min, y_max))
 }
 
 fn get_extreme(direction: Direction, vector: &VectorOfPoint) -> Result<(Point, Point), Error> {
@@ -1366,6 +1392,7 @@ fn threshold(phase: &Mat, threshold_value: i32) -> Result<Mat, anyhow::Error> {
 fn match_shapes(puzzle1: &PuzzlePiece, puzzle2: &PuzzlePiece) -> Result<(), anyhow::Error>{
     //fill_only_contour(puzzle1, &puzzle2)?;
     //println!("{}-{}", puzzle1.file_name, puzzle2.file_name);
+    println!("");
     for sequence1 in &puzzle1.contours_with_dir {
 
 /*         let mut hu_moments_seq_1 = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
@@ -1382,10 +1409,78 @@ fn match_shapes(puzzle1: &PuzzlePiece, puzzle2: &PuzzlePiece) -> Result<(), anyh
             };
         } */
 
-
         for sequence2 in &puzzle2.contours_with_dir {
             if sequence1.gender != Genders::Line && sequence2.gender != Genders::Line && sequence1.gender != sequence2.gender {
+                let len1 = sequence1.countour_traslated.len();
+                let len2 = sequence2.countour_traslated.len();
+                let min_len = if  len1 > len2 { len2 } else { len1 };
+                let diff_lunghezza = if  len1 > len2 { len1 - len2 } else { len2 - len1 };
+                let diff_larghezza = (sequence1.x_max - sequence2.x_max).abs();
+                let diff_altezza = ((sequence1.y_min - sequence1.y_max).abs() - (sequence2.y_min - sequence2.y_max).abs()).abs();
+                let prod1 = if  len1 > len2 { 1 } else { 0 };
+                let prod2 = if  len1 > len2 { 0 } else { 1 };
 
+                let mut min_count_0 = i32::MAX;
+
+                for j in 0..diff_lunghezza {
+                    let mut count = 0;
+                    for i in 0..min_len {
+                        count += sequence1.countour_traslated.get(i + j*prod1)?.y - sequence2.countour_traslated.get(i + j*prod2)?.y;
+                    }
+
+                    if min_count_0 > count.abs() {
+                        min_count_0 = count.abs();
+                    }
+                }
+
+                let mut min_count_1 = i32::MAX;
+                let len1 = len1 - 1;
+
+                for j in 0..diff_lunghezza {
+                    let mut count = 0;
+                    let j_prod1 = j*prod1;
+                    let j_prod2 = j*prod2;
+                    for i in 0..min_len {
+                        count += sequence1.countour_traslated.get(len1 - i - j_prod1)?.y - sequence2.countour_traslated.get(i + j_prod2)?.y;
+                    }
+
+                    if min_count_1 > count.abs() {
+                        min_count_1 = count.abs();
+                    }
+                }
+
+                let mut min_count_2 = i32::MAX;
+                let len2 = len2 - 1;
+
+                for j in 0..diff_lunghezza {
+                    let mut count = 0;
+                    let j_prod1 = j*prod1;
+                    let j_prod2 = j*prod2;
+                    for i in 0..min_len {
+                        count += sequence1.countour_traslated.get(i + j_prod1)?.y - sequence2.countour_traslated.get(len2 - i - j_prod2)?.y;
+                    }
+
+                    if min_count_2 > count.abs() {
+                        min_count_2 = count.abs();
+                    }
+                }
+                if diff_larghezza < 100 && diff_altezza < 30{
+                    println!("{} - {} - {:?} - {:?}; count_0: {}; count_1: {}; count_2: {}; diff_lunghezza: {}; diff_larghezza: {}; diff_altezza: {}", 
+                        puzzle1.file_name, puzzle2.file_name, sequence1.dir, sequence2.dir, 
+                        min_count_0, min_count_1, min_count_2, 
+                        diff_lunghezza,
+                        diff_larghezza,
+                        diff_altezza
+                    );
+                }
+
+                /* else {
+                    println!("Eliminated - {} - {} - {:?} - {:?}; count: {}; diff_lunghezza: {}; diff_larghezza: {}; diff_altezza: {}", 
+                        puzzle1.file_name, puzzle2.file_name, sequence1.dir, sequence2.dir, count.abs(), diff_lunghezza,
+                        diff_larghezza,
+                        diff_altezza
+                    );
+                } */
 /* 
                 let mut angle = 45.0;
                 let scale = 1.0;
@@ -1539,7 +1634,7 @@ fn fill_only_contour_with_text(puzzle: &PuzzlePiece, side1: &ContourWithDir, sid
     )?;
 
     show_image("fill_only_contour", &new_phase);
-    wait_key(0);
+    let _ = wait_key(0);
 
     Ok(())
 }
