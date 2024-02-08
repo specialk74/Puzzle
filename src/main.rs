@@ -1420,6 +1420,24 @@ fn match_shapes(puzzle1: &PuzzlePiece, puzzle2: &PuzzlePiece) -> Result<(), anyh
                 let prod1 = if  len1 > len2 { 1 } else { 0 };
                 let prod2 = if  len1 > len2 { 0 } else { 1 };
 
+                let mut x_y_max_sequence_1 = 0;
+                let mut y_max = 0;
+                for point in sequence1.countour_traslated.iter() {
+                    if point.y > y_max {
+                        y_max = point.y;
+                        x_y_max_sequence_1 = point.x;
+                    }
+                }
+
+                let mut x_y_max_sequence_2 = 0;
+                let mut y_max = 0;
+                for point in sequence2.countour_traslated.iter() {
+                    if point.y > y_max {
+                        y_max = point.y;
+                        x_y_max_sequence_2 = point.x;
+                    }
+                }
+
                 let mut min_count_0 = i32::MAX;
 
                 for j in 0..diff_lunghezza {
@@ -1430,6 +1448,19 @@ fn match_shapes(puzzle1: &PuzzlePiece, puzzle2: &PuzzlePiece) -> Result<(), anyh
 
                     if min_count_0 > count.abs() {
                         min_count_0 = count.abs();
+                    }
+                }
+
+                let mut min_count_3 = i32::MAX;
+
+                for j in 0..diff_lunghezza {
+                    let mut count = 0;
+                    for i in 0..min_len {
+                        count += sequence2.countour_traslated.get(i + j*prod2)?.y - sequence1.countour_traslated.get(i + j*prod1)?.y;
+                    }
+
+                    if min_count_3 > count.abs() {
+                        min_count_3 = count.abs();
                     }
                 }
 
@@ -1465,12 +1496,17 @@ fn match_shapes(puzzle1: &PuzzlePiece, puzzle2: &PuzzlePiece) -> Result<(), anyh
                     }
                 }
                 if diff_larghezza < 100 && diff_altezza < 30{
-                    println!("{} - {} - {:?} - {:?}; count_0: {}; count_1: {}; count_2: {}; diff_lunghezza: {}; diff_larghezza: {}; diff_altezza: {}", 
+                    println!("{} - {} - {:?} - {:?}; count_0: {}; count_1: {}; count_2: {}; count_3: {}; diff_lunghezza: {}; diff_larghezza: {}; diff_altezza: {}; 
+                    x_y_max_sequence_1: {}; x_y_max_sequence_2: {}; x_y_max_sequence_1_rev: {}; x_y_max_sequence_2_rev: {}", 
                         puzzle1.file_name, puzzle2.file_name, sequence1.dir, sequence2.dir, 
-                        min_count_0, min_count_1, min_count_2, 
+                        min_count_0, min_count_1, min_count_2, min_count_3,
                         diff_lunghezza,
                         diff_larghezza,
-                        diff_altezza
+                        diff_altezza,
+                        x_y_max_sequence_1,
+                        x_y_max_sequence_2,
+                        sequence1.countour_traslated.len() - x_y_max_sequence_1 as usize,
+                        sequence2.countour_traslated.len() - x_y_max_sequence_2 as usize
                     );
                 }
 
