@@ -2,8 +2,8 @@ use anyhow::Error;
 use anyhow::anyhow;
 use anyhow::Result;
 use opencv::{self as cv, prelude::*};
-//use rand::seq;
-//use rand::seq::index;
+use serde::{Serialize, Deserialize};
+use serde_json::{to_string_pretty, to_writer_pretty, from_str};
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
 use std::collections::HashMap;
@@ -15,8 +15,9 @@ use strum::{EnumIter, IntoEnumIterator};
 use opencv::types::VectorOfPoint;
 use opencv::types::VectorOfVectorOfPoint;
 use itertools::Itertools;
+use std::path::Path;
 
-#[derive(EnumIter, Debug, Hash, Eq, PartialEq, Clone, Copy)]
+#[derive(EnumIter, Debug, Hash, Eq, PartialEq, Clone, Copy, Serialize, Deserialize)]
 enum Direction {
     UpSide,
     DownSide,
@@ -24,7 +25,7 @@ enum Direction {
     LeftSide
 }
 
-#[derive(EnumIter, Debug, Hash, Eq, PartialEq, Clone, Copy)]
+#[derive(EnumIter, Debug, Hash, Eq, PartialEq, Clone, Copy, Serialize, Deserialize)]
 enum Genders {
     Unknown,
     Female,
@@ -32,14 +33,22 @@ enum Genders {
     Line
 }
 
+#[derive(Debug, Serialize, Deserialize)]
 struct ContourWithDir {
+    #[serde(skip)]
     countour: VectorOfPoint,
+    #[serde(skip)]
     countour_traslated: VectorOfPoint,
     dir: Direction,
     gender: Genders,
     x_max: i32,
     y_min: i32,
-    y_max: i32
+    y_max: i32,
+    d1: i32,
+    d2: i32,
+    d3: i32,
+    d4: i32,
+    d5: i32,
 }
 
 struct PuzzlePiece {
@@ -109,6 +118,26 @@ impl PuzzlePiece {
     }
 }
 
+/* 
+impl Serialize for ContourWithDir {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        // 3 is the number of fields in the struct.
+        let mut state = serializer.serialize_struct("ContourWithDir", 7)?;
+        state.serialize_field("dir", &self.dir)?;
+        state.serialize_field("gender", &self.gender)?;
+        state.serialize_field("d1", &self.d1)?;
+        state.serialize_field("d2", &self.d2)?;
+        state.serialize_field("d3", &self.d3)?;
+        state.serialize_field("d4", &self.d4)?;
+        state.serialize_field("d5", &self.d5)?;
+        state.end()
+    }
+}
+*/
+
 impl ContourWithDir {
     fn new (countour: VectorOfPoint, dir: Direction, gender: Genders, countour_traslated: VectorOfPoint, x_max: i32, y_min: i32, y_max: i32) -> Self {
         Self { 
@@ -118,7 +147,55 @@ impl ContourWithDir {
             countour_traslated,
             x_max,
             y_min, 
-            y_max
+            y_max,
+            d3: i32::MAX,
+            d1: -1,
+            d4: -1,
+            d5: -1,
+            d2: -1,
+        }
+    }
+
+    fn dx(&mut self) {
+        if self.d1 != -1 {
+            return;
+        }
+
+        for point in self.countour_traslated.iter() {
+            if point.y < self.d3 {
+                self.d1 = point.x;
+                self.d3 = point.y;
+            }
+            if point.x > self.d5 {
+                self.d5 = point.x;
+            }
+        }
+        self.d4 = self.d5 - self.d1;
+        self.d2 = 0;
+
+        for i in self.d3..-100 {
+            let mut v = Vec::new();
+            for point in self.countour_traslated.iter() {
+                if point.y == i {
+                    v.push(point.x);
+                }
+            }
+            if v.len() > 1 {
+                let mut x_min = i32::MAX;
+                let mut x_max = 0;
+                for x in v {
+                    if x_min > x {
+                        x_min = x;
+                    }
+                    if x_max < x {
+                        x_max = x;
+                    }
+                }
+                let diff = x_max - x_min;
+                if diff > self.d2 {
+                    self.d2 = diff;
+                }
+            }
         }
     }
 }
@@ -130,19 +207,19 @@ Ok(())
 
 fn my_contour() -> Result<(), anyhow::Error> {
     let file_names = vec![
-    // "IMG20240113121213", 
-    // "IMG20240113121228", 
-    // "IMG20240113121241",
-    // "IMG20240113121256",
-    // "IMG20240113121307",
-    // "IMG20240113121330",
-    // "IMG20240113121341",
-    // "IMG20240113121354",
+    "IMG20240113121213", 
+    "IMG20240113121228", 
+    "IMG20240113121241",
+    "IMG20240113121256",
+    "IMG20240113121307",
+    "IMG20240113121330",
+    "IMG20240113121341",
+    "IMG20240113121354",
     "IMG20240113121410",
     "IMG20240113121426",
     "IMG20240113121438",
-    // "IMG20240113121458",
-    // "IMG20240113121510",
+    "IMG20240113121458",
+    "IMG20240113121510",
     ];
 
     let puzzles: Vec<PuzzlePiece> = file_names
@@ -153,8 +230,14 @@ fn my_contour() -> Result<(), anyhow::Error> {
         .collect();
     // file_names.into_iter().for_each(|file_name| { process(file_name); });
 
+    for puzzle in puzzles.iter() {
+        if !Path::new(&format!("{}.json",puzzle.file_name)).exists() {
+            let _ = to_writer_pretty(&File::create(format!("{}.json", puzzle.file_name))?, &puzzle.contours_with_dir);
+        }
+    }
+
     for (element1, element2) in puzzles.iter().tuple_combinations() {
-        match_shapes(element1, element2)?;
+        match_shapes(&element1, &element2)?;
     }
 
     Ok(())
@@ -164,6 +247,14 @@ fn process(file_name: &str) -> Result<PuzzlePiece, anyhow::Error> {
     println!("Process: {} ...",file_name);
     let mut puzzle = PuzzlePiece::new();
     puzzle.file_name = file_name.to_string();
+    let path = format!("{}.json",puzzle.file_name);
+
+    if Path::new(&path).exists() {
+        let val = std::fs::read_to_string(path)?;
+        let u: Vec<ContourWithDir> = from_str(&val)?;
+        puzzle.contours_with_dir = u;
+        return Ok(puzzle);
+    }
     puzzle.original_image = cv::imgcodecs::imread(format!("./assets/{}.jpg", puzzle.file_name).as_str(), cv::imgcodecs::IMREAD_COLOR)?;
     
     //show_image("Prima", &puzzle.original_image);
@@ -186,35 +277,8 @@ fn process(file_name: &str) -> Result<PuzzlePiece, anyhow::Error> {
     puzzle.cy = cy;
     puzzle.center = Point::new(puzzle.cx, puzzle.cy);
 
-
     let _ = find_min_max(&mut puzzle);
 
-/* 
-    let rotate = find_best_rotate(&puzzle)?;
-    puzzle.original_image = rotate_image(&puzzle, &puzzle.original_image, &rotate)?;
-    //show_image("Dopo", &puzzle.original_image);
-
-    //wait_key(0);
-
-
-    let phase = to_grey(&puzzle.original_image)?;
-    let grey_phase = blur(&phase)?;
-    puzzle.grey = grey_phase;
-
-    let threshold = search_best_threshold(&puzzle.grey)?;
-    let (contours, phase) = sub_process(&puzzle.grey, threshold)?;
-    puzzle.original_contours = contours;
-    puzzle.threshold = threshold;
-
-    puzzle.rect = find_bounding_rect(&puzzle, &phase, &puzzle.original_contours)?;
-
-    let Ok((cx, cy)) = find_centroid(&puzzle) else { todo!() };
-    puzzle.cx = cx;
-    puzzle.cy = cy;
-
-    let _ = find_min_max(&mut puzzle);
-*/
-    
     let phase = fill_poly(&puzzle)?;
 
     // corner_herris_application(&phase);
@@ -233,10 +297,6 @@ fn process(file_name: &str) -> Result<PuzzlePiece, anyhow::Error> {
     
     set_corners(&mut puzzle, &corners);
 
-
-    //let corners = find_corners(&puzzle, &pre_corner)?;
-    //set_corners(&mut puzzle, &corners);
-
     puzzle.corners = corners;
 
 
@@ -244,7 +304,7 @@ fn process(file_name: &str) -> Result<PuzzlePiece, anyhow::Error> {
 
     (puzzle.contours, puzzle.contours_with_dir) = split_contour(&mut puzzle)?;
 
-    write_contour(&puzzle)?;
+    //write_contour(&puzzle)?;
     draw_contour(&puzzle)?;
     
     Ok(puzzle)
@@ -563,7 +623,9 @@ fn split_contour(puzzle: &mut PuzzlePiece) -> Result<(VectorOfVectorOfPoint, Vec
     for dir in Direction::iter() {
         let (single_contours, countour_traslated, x_max, y_min, y_max) = split_single_contour(puzzle, dir)?;
         let gender = get_gender(puzzle, dir, &single_contours)?;
-        contour_values_with_dir.push(ContourWithDir::new(single_contours.clone(), dir, gender, countour_traslated, x_max, y_min, y_max));
+        let mut c = ContourWithDir::new(single_contours.clone(), dir, gender, countour_traslated, x_max, y_min, y_max);
+        c.dx();
+        contour_values_with_dir.push(c);
         contour_values.push(single_contours);
     }
     
@@ -1389,10 +1451,42 @@ fn threshold(phase: &Mat, threshold_value: i32) -> Result<Mat, anyhow::Error> {
     Ok(new_phase)
 }
 
+fn max_x_for_y(contour: &VectorOfPoint, x_y_max_sequence: i32) -> Result<i32>
+{
+    let mut max_sporgenza = 0;
+    let len = contour.len();
+    for j in x_y_max_sequence..-100 {
+        let mut v = Vec::new();
+        for i in 0..len {
+            // Quanti X hanno questa altezza?
+            let point = contour.get(i)?;
+            if point.y == j {
+                v.push(point.x);
+            }
+        }
+        if v.len() > 1 {
+            if v[0] > v[v.len() - 1] {
+                let val = v[0] - v[v.len() - 1];
+                if val > max_sporgenza {
+                    max_sporgenza = val;
+                }
+            }
+            else {
+                let val = v[v.len() - 1] - v[0];
+                if val > max_sporgenza {
+                    max_sporgenza = val;
+                }
+            }
+        }
+    }
+
+    Ok(max_sporgenza)
+}
+
 fn match_shapes(puzzle1: &PuzzlePiece, puzzle2: &PuzzlePiece) -> Result<(), anyhow::Error>{
     //fill_only_contour(puzzle1, &puzzle2)?;
     //println!("{}-{}", puzzle1.file_name, puzzle2.file_name);
-    println!("");
+    //println!("");
     for sequence1 in &puzzle1.contours_with_dir {
 
 /*         let mut hu_moments_seq_1 = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
@@ -1411,6 +1505,30 @@ fn match_shapes(puzzle1: &PuzzlePiece, puzzle2: &PuzzlePiece) -> Result<(), anyh
 
         for sequence2 in &puzzle2.contours_with_dir {
             if sequence1.gender != Genders::Line && sequence2.gender != Genders::Line && sequence1.gender != sequence2.gender {
+                //sequence1.dx();
+                //sequence2.dx();
+                let d1 = (sequence1.d1 - sequence2.d1).abs();
+                let d2 = (sequence1.d2 - sequence2.d2).abs();
+                let d3 = (sequence1.d3 - sequence2.d3).abs();
+                let d4 = (sequence1.d4 - sequence2.d4).abs();
+                let d5 = (sequence1.d5 - sequence2.d5).abs();
+                let d1_d4 = (sequence1.d1 - sequence2.d4).abs();
+                let d4_d1 = (sequence1.d4 - sequence2.d1).abs();
+                if d5 < 100 && d3 < 30 && 
+                    ((d1 < 60 && d4 < 60) || (d1_d4 < 60 && d4_d1 < 60))
+                {
+                    println!("{} - {} - {:?} - {:?}; d1: {}; d2: {}; d3: {}, d4: {}; d5: {}; d1-d4: {}; d4-d1: {}",
+                        puzzle1.file_name, puzzle2.file_name, sequence1.dir, sequence2.dir,
+                        d1,
+                        d2,
+                        d3,
+                        d4,
+                        d5,
+                        d1_d4,
+                        d4_d1,
+                    )
+                };
+            /* 
                 let len1 = sequence1.countour_traslated.len();
                 let len2 = sequence2.countour_traslated.len();
                 let min_len = if  len1 > len2 { len2 } else { len1 };
@@ -1420,26 +1538,29 @@ fn match_shapes(puzzle1: &PuzzlePiece, puzzle2: &PuzzlePiece) -> Result<(), anyh
                 let prod1 = if  len1 > len2 { 1 } else { 0 };
                 let prod2 = if  len1 > len2 { 0 } else { 1 };
 
+                // Calcola la X in cui la Y è massima
                 let mut x_y_max_sequence_1 = 0;
-                let mut y_max = 0;
+                let mut y_max_1 = 0;
                 for point in sequence1.countour_traslated.iter() {
-                    if point.y > y_max {
-                        y_max = point.y;
+                    if point.y < y_max_1 {
+                        y_max_1 = point.y;
                         x_y_max_sequence_1 = point.x;
                     }
                 }
 
+                // Calcola la X in cui la Y è massima
                 let mut x_y_max_sequence_2 = 0;
-                let mut y_max = 0;
+                let mut y_max_2 = 0;
                 for point in sequence2.countour_traslated.iter() {
-                    if point.y > y_max {
-                        y_max = point.y;
+                    if point.y < y_max_2 {
+                        y_max_2 = point.y;
                         x_y_max_sequence_2 = point.x;
                     }
                 }
 
+                // Fa la differenza delle Y per capire quanto le figure siano simili sequence1 - sequence2
+                // Prova anche a spostare una figura rispetto all'altra per cercare la minima differenza
                 let mut min_count_0 = i32::MAX;
-
                 for j in 0..diff_lunghezza {
                     let mut count = 0;
                     for i in 0..min_len {
@@ -1451,8 +1572,9 @@ fn match_shapes(puzzle1: &PuzzlePiece, puzzle2: &PuzzlePiece) -> Result<(), anyh
                     }
                 }
 
+                // Fa la differenza delle Y per capire quanto le figure siano simili sequence2 - sequence1
+                // Prova anche a spostare una figura rispetto all'altra per cercare la minima differenza
                 let mut min_count_3 = i32::MAX;
-
                 for j in 0..diff_lunghezza {
                     let mut count = 0;
                     for i in 0..min_len {
@@ -1464,9 +1586,10 @@ fn match_shapes(puzzle1: &PuzzlePiece, puzzle2: &PuzzlePiece) -> Result<(), anyh
                     }
                 }
 
+                // Fa la differenza delle Y per la sequecen1 partendo da dx vs sx mentre per sequence2 da sx vs dx
+                // Prova anche a spostare una figura rispetto all'altra per cercare la minima differenza
                 let mut min_count_1 = i32::MAX;
                 let len1 = len1 - 1;
-
                 for j in 0..diff_lunghezza {
                     let mut count = 0;
                     let j_prod1 = j*prod1;
@@ -1480,9 +1603,10 @@ fn match_shapes(puzzle1: &PuzzlePiece, puzzle2: &PuzzlePiece) -> Result<(), anyh
                     }
                 }
 
+                // Fa la differenza delle Y per la sequecen2 partendo da dx vs sx mentre per sequence1 da sx vs dx
+                // Prova anche a spostare una figura rispetto all'altra per cercare la minima differenza
                 let mut min_count_2 = i32::MAX;
                 let len2 = len2 - 1;
-
                 for j in 0..diff_lunghezza {
                     let mut count = 0;
                     let j_prod1 = j*prod1;
@@ -1495,20 +1619,30 @@ fn match_shapes(puzzle1: &PuzzlePiece, puzzle2: &PuzzlePiece) -> Result<(), anyh
                         min_count_2 = count.abs();
                     }
                 }
+
+                // Cerca la X massima della sporgenza nel sequence1
+                let max_sporgenza_1 = max_x_for_y(&sequence1.countour_traslated, y_max_1)?;
+
+                // Cerca la X massima della sporgenza nel sequence2
+                let max_sporgenza_2 = max_x_for_y(&sequence2.countour_traslated, y_max_2)?;
+
                 if diff_larghezza < 100 && diff_altezza < 30{
                     println!("{} - {} - {:?} - {:?}; count_0: {}; count_1: {}; count_2: {}; count_3: {}; diff_lunghezza: {}; diff_larghezza: {}; diff_altezza: {}; 
-                    x_y_max_sequence_1: {}; x_y_max_sequence_2: {}; x_y_max_sequence_1_rev: {}; x_y_max_sequence_2_rev: {}", 
+                    x_y_max_sequence: {}; ; x_y_max_sequence_1_rev: {}; x_y_max_sequence_2_rev: {};
+                    max_sporgenza: {}", 
                         puzzle1.file_name, puzzle2.file_name, sequence1.dir, sequence2.dir, 
                         min_count_0, min_count_1, min_count_2, min_count_3,
                         diff_lunghezza,
                         diff_larghezza,
                         diff_altezza,
-                        x_y_max_sequence_1,
-                        x_y_max_sequence_2,
-                        sequence1.countour_traslated.len() - x_y_max_sequence_1 as usize,
-                        sequence2.countour_traslated.len() - x_y_max_sequence_2 as usize
+                        (x_y_max_sequence_1 - x_y_max_sequence_2).abs(),
+                        (x_y_max_sequence_2 - (sequence1.countour_traslated.len() - x_y_max_sequence_1 as usize) as i32).abs(),
+                        (x_y_max_sequence_1 - (sequence2.countour_traslated.len() - x_y_max_sequence_2 as usize) as i32).abs(),
+                        (max_sporgenza_1 - max_sporgenza_2).abs()
                     );
                 }
+
+                */
 
                 /* else {
                     println!("Eliminated - {} - {} - {:?} - {:?}; count: {}; diff_lunghezza: {}; diff_larghezza: {}; diff_altezza: {}", 
