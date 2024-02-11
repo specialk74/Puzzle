@@ -4,3 +4,4 @@ Cargo.lock
 *.jpg
 *.txt
 .DS_Store
+*.json
