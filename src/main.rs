@@ -11,10 +11,8 @@ use rand::Rng;
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
 use serde::{Deserialize, Serialize};
-use serde_json::to_string;
 use serde_json::{from_str, to_writer_pretty};
 use std::collections::HashMap;
-use std::ffi::OsStr;
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
@@ -57,7 +55,7 @@ struct ContourWithDir {
     links: HashMap<String, Direction>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 struct PuzzlePiece {
     file_name: String,
     contours: VectorOfVectorOfPoint,
@@ -225,21 +223,18 @@ fn find_files(path: &str) -> io::Result<Vec<String>> {
 fn my_contour() -> Result<(), anyhow::Error> {
     let mut puzzles: Vec<PuzzlePiece> = find_files("./assets/")?
         .into_par_iter()
-        .map(|file_name| process(&file_name).unwrap())
+        .map(|file_name| process(&file_name).unwrap_or_default())
         .collect();
 
-    // let prova: Vec<(PuzzlePiece, PuzzlePiece)> = puzzles
-    //     .iter()
-    //     .tuple_combinations()
-    //     .map(|(element1, element2)| {
-    //         match_shapes(&element1, &element1)
-    //     })
-    //     .collect();
     let mut puzzles_links = Vec::new();
 
+    let mut last_file_name = String::new();
     for (element1, element2) in puzzles.iter().tuple_combinations() {
-        let (link1, link2) = match_shapes(element1, element2)?;
-
+        if last_file_name != element1.file_name {
+            last_file_name = element1.file_name.clone();
+            println!("\n");
+        }
+        let (add, link1, link2) = match_shapes(element1, element2)?;
         puzzles_links.push(link1);
         puzzles_links.push(link2);
     }
@@ -1283,10 +1278,10 @@ fn max_x_for_y(contour: &VectorOfPoint, x_y_max_sequence: i32) -> Result<i32> {
 fn match_shapes(
     puzzle1_orig: &PuzzlePiece,
     puzzle2_orig: &PuzzlePiece,
-) -> Result<(PuzzlePiece, PuzzlePiece), anyhow::Error> {
+) -> Result<(bool, PuzzlePiece, PuzzlePiece), anyhow::Error> {
     let mut puzzle1 = puzzle1_orig.clone();
     let mut puzzle2 = puzzle2_orig.clone();
-
+    let mut add = false;
     for sequence1 in puzzle1.contours_with_dir.iter_mut() {
         for sequence2 in puzzle2.contours_with_dir.iter_mut() {
             if sequence1.gender != Genders::Line
@@ -1313,6 +1308,7 @@ fn match_shapes(
                         d1_d4,
                         d4_d1,
                     );
+                    add = true;
                     //sequence1.links.push(format!("{}-{:?}",puzzle2.file_name, sequence2.dir));
                     sequence1
                         .links
@@ -1326,7 +1322,7 @@ fn match_shapes(
         }
     }
 
-    Ok((puzzle1, puzzle2))
+    Ok((add, puzzle1, puzzle2))
 }
 
 fn fill_only_contour(
