@@ -57,7 +57,6 @@ pub fn show_image(text: &str, img: &Mat) {
 
 pub fn find_bounding_rect(
     contours: &Vector<Vector<Point>>,
-    _original_image: &Mat,
 ) -> Result<cv::core::Rect, anyhow::Error> {
     let mut rect = cv::core::Rect::default();
 
@@ -151,4 +150,105 @@ pub fn threshold(phase: &Mat, threshold_value: i32) -> Result<Mat, anyhow::Error
 
 pub fn read_image(file_name: &str) -> Result<Mat, opencv::Error> {
     cv::imgcodecs::imread(file_name, cv::imgcodecs::IMREAD_COLOR)
+}
+
+pub fn find_corners(center: &Point, phase: &Mat) -> Result<(f64, Vector<Point>), anyhow::Error> {
+    let mut corners = Vector::new();
+    let max_corners = 4;
+    let quality_level = 0.1;
+    let mut distance = 700.0;
+    let mut block_size;
+    let use_harris_detector: bool = true;
+    let k: f64 = 0.1;
+    let mut min_corners = Vector::new();
+    let mut points: Vector<Point> = Vector::new();
+    let mut max_tot_distance = 0.0;
+    loop {
+        block_size = 60;
+        loop {
+            match cv::imgproc::good_features_to_track(
+                &phase,
+                &mut corners,
+                max_corners,
+                quality_level,
+                distance,
+                &cv::core::no_array(),
+                block_size,
+                use_harris_detector,
+                k,
+            ) {
+                Ok(_) => {}
+                Err(err) => println!(
+                    "Error on find_corners (block_size {}): {} with ",
+                    block_size, err
+                ),
+            };
+
+            if corners.len() == 4 {
+                let value_min_area = cv::imgproc::min_area_rect(&corners)?;
+
+                points.clear();
+                let min_area_center = Point::new(
+                    value_min_area.center.x as i32,
+                    value_min_area.center.y as i32,
+                );
+                let diff = min_area_center - *center;
+                points.push(diff);
+
+                let p1_diff = corners.get(0)? - *center;
+                points.clear();
+                points.push(p1_diff);
+
+                let p2_diff = corners.get(1)? - *center;
+                points.clear();
+                points.push(p2_diff);
+
+                let p3_diff = corners.get(2)? - *center;
+                points.clear();
+                points.push(p3_diff);
+
+                let p4_diff = corners.get(3)? - *center;
+                points.clear();
+                points.push(p4_diff);
+
+                points.push(p1_diff);
+                points.push(p2_diff);
+                points.push(p3_diff);
+                let tot_distance = cv::core::norm_def(&points)?;
+
+                if max_tot_distance < tot_distance {
+                    min_corners = corners.clone();
+                    max_tot_distance = tot_distance;
+                }
+            }
+
+            block_size += 20;
+            if block_size > 90 {
+                break;
+            }
+        }
+        distance += 20.0;
+        if distance > 1000.0 {
+            break;
+        }
+    }
+
+    Ok((max_tot_distance, min_corners))
+}
+
+pub fn get_first_contour(contours: &Vector<Vector<Point>>) -> Result<Vector<Point>, anyhow::Error> {
+    contours.get(0).map_err(|err| anyhow!(err))
+}
+
+pub fn find_centroid(contours: &Vector<Vector<Point>>) -> Result<Point, anyhow::Error> {
+    let first = get_first_contour(contours)?;
+
+    match cv::imgproc::moments_def(&first) {
+        Ok(moment) => {
+            let cx = moment.m10 / moment.m00;
+            let cy = moment.m01 / moment.m00;
+            Ok(Point::new(cx as i32, cy as i32))
+        }
+        Err(err) => Err(anyhow!(err)),
+    }
 }
