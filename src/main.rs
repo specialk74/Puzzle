@@ -301,7 +301,7 @@ fn process(file_name: &str) -> Result<PuzzlePiece, anyhow::Error> {
 
     // region: Find centroid
     println!("Find centroid: {}", &puzzle.file_name);
-    puzzle.center = find_centroid(&puzzle.contours)?;
+    puzzle.center = find_centroid(&puzzle.original_contours)?;
     // endregion
 
     // region: Find min max
