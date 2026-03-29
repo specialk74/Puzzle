@@ -6,15 +6,15 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-strum_macros = "0.26.4"
-anyhow = "1.0.95"
-glob = "0.3.1"
-image = "0.25.5"
-itertools = "0.13.0"
-ndarray = "0.16.1"
-opencv = { version = "0.93.5", features = ["clang-runtime"] }
-rand = "0.8.5"
-rayon = "1.8.0"
-serde = { version = "1.0.217", features = ["derive"] }
-serde_json = "1.0.134"
-strum = { version = "0.26.3", features = ["derive"] }
+strum_macros = "*"
+anyhow = "*"
+glob = "*"
+image = "*"
+itertools = "*"
+ndarray = "*"
+opencv = { version = "*", features = ["clang-runtime"] }
+rand = "*"
+rayon = "*"
+serde = { version = "*", features = ["derive"] }
+serde_json = "*"
+strum = { version = "*", features = ["derive"] }
