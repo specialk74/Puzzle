@@ -1,3 +1,4 @@
+use itertools::{Itertools, MinMaxResult};
 use opencv::core::{Point, Vector};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -90,7 +91,17 @@ impl ContourWithDir {
                     v.push(point.x);
                 }
             }
-            if v.len() > 1 {
+            match v.iter().minmax() {
+                MinMaxResult::NoElements | MinMaxResult::OneElement(_) => {}
+                MinMaxResult::MinMax(x_min, x_max) => {
+                    let diff = x_max - x_min;
+                    if diff > self.d2 {
+                        self.d2 = diff;
+                    }
+                }
+            }
+
+            /* if v.len() > 1 {
                 let mut x_min = i32::MAX;
                 let mut x_max = 0;
                 for x in v {
@@ -105,7 +116,7 @@ impl ContourWithDir {
                 if diff > self.d2 {
                     self.d2 = diff;
                 }
-            }
+            } */
         }
     }
 

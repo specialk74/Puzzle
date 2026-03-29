@@ -1,4 +1,5 @@
 use anyhow::anyhow;
+use opencv::core::AlgorithmHint;
 use opencv::core::Point;
 use opencv::core::Vector;
 use opencv::{self as cv, prelude::*};
@@ -6,7 +7,13 @@ use rand::Rng;
 
 pub fn to_grey(phase: &Mat) -> Result<Mat, anyhow::Error> {
     let mut new_phase = cv::core::Mat::default();
-    match cv::imgproc::cvt_color(&phase, &mut new_phase, cv::imgproc::COLOR_BGR2GRAY, 0) {
+    match cv::imgproc::cvt_color(
+        &phase,
+        &mut new_phase,
+        cv::imgproc::COLOR_BGR2GRAY,
+        0,
+        AlgorithmHint::ALGO_HINT_DEFAULT,
+    ) {
         Ok(_) => {}
         Err(err) => {
             println!("To Grey Error: {}", err);
@@ -251,4 +258,27 @@ pub fn find_centroid(contours: &Vector<Vector<Point>>) -> Result<Point, anyhow::
         }
         Err(err) => Err(anyhow!(err)),
     }
+}
+
+pub fn find_limit(vector_traslated: &Vector<Point>) -> (i32, i32, i32, i32) {
+    let mut x_max = 0;
+    let mut y_min = i32::MAX;
+    let mut y_max = 0;
+    let mut x_min = i32::MAX;
+
+    for point in vector_traslated.iter() {
+        if point.x < x_min {
+            x_min = point.x;
+        }
+        if point.x > x_max {
+            x_max = point.x;
+        }
+        if point.y < y_min {
+            y_min = point.y;
+        }
+        if point.y > y_max {
+            y_max = point.y;
+        }
+    }
+    (x_max, y_max, x_min, y_min)
 }

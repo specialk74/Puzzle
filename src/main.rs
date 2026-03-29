@@ -7,6 +7,7 @@ use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
 use serde_json::{from_str, to_writer_pretty};
 use std::collections::HashMap;
+//use std::ffi::OsString;
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
@@ -26,6 +27,7 @@ use utils::*;
 #[derive(Clone, Debug, Default)]
 struct PuzzlePiece {
     file_name: String,
+    output_file: String,
     contours: Vector<Vector<Point>>,
     contours_with_dir: Vec<ContourWithDir>,
 
@@ -57,6 +59,7 @@ impl PuzzlePiece {
     fn new() -> Self {
         Self {
             file_name: "puzzle".to_string(),
+            output_file: "".to_string(),
             contours: Vector::new(),
             contours_with_dir: Vec::new(),
 
@@ -85,7 +88,7 @@ impl PuzzlePiece {
         }
     }
 
-    fn find_min_max(&mut self) -> std::io::Result<()> {
+    fn find_min_max(&mut self) {
         for contour in &self.original_contours {
             for point in contour.iter() {
                 if point.x < self.x_min.x {
@@ -109,8 +112,6 @@ impl PuzzlePiece {
                 }
             }
         }
-
-        Ok(())
     }
 
     fn set_corners(&mut self, corners: &Vector<Point>) {
@@ -175,15 +176,69 @@ impl PuzzlePiece {
     fn first_contour(&self) -> Result<Vector<Point>, anyhow::Error> {
         get_first_contour(&self.original_contours)
     }
+
+    fn get_polygon(&self, direction: &Direction, iteration: i32) -> Vector<Point> {
+        let mut polygon = Vector::new();
+        let delta: i32 = 10;
+
+        match direction {
+            Direction::Down => {
+                let delta1 = self.y_max.y + delta;
+                polygon.push(self.left_down_corner);
+                polygon.push(Point::new(self.left_down_corner.x, delta1));
+                polygon.push(Point::new(self.right_down_corner.x, delta1));
+                polygon.push(self.right_down_corner);
+            }
+            Direction::Up => {
+                let delta1 = self.y_min.y - delta;
+                polygon.push(self.left_up_corner);
+                polygon.push(Point::new(self.left_up_corner.x, delta1));
+                polygon.push(Point::new(self.right_up_corner.x, delta1));
+                polygon.push(self.right_up_corner);
+            }
+            Direction::Right => {
+                let delta1 = self.x_max.x + delta;
+                polygon.push(self.right_up_corner);
+                polygon.push(Point::new(delta1, self.right_up_corner.y));
+                polygon.push(Point::new(delta1, self.right_down_corner.y));
+                polygon.push(self.right_down_corner);
+            }
+            Direction::Left => {
+                let delta1 = self.x_min.x - delta;
+                polygon.push(self.left_up_corner);
+                polygon.push(Point::new(delta1, self.left_up_corner.y));
+                polygon.push(Point::new(delta1, self.left_down_corner.y));
+                polygon.push(self.left_down_corner);
+            }
+        }
+
+        let valore = delta * iteration * if iteration % 2 == 0 { 1 } else { -1 };
+        let mut mid = self.center;
+        match direction {
+            Direction::Down | Direction::Up => {
+                mid.y = self.center.y + valore;
+            }
+            Direction::Left | Direction::Right => {
+                mid.x = self.center.x + valore;
+            }
+        }
+        polygon.push(mid);
+
+        // println!(
+        //     "Crea il poligono direction: {:?} - poligon: {:?} per il file {:?}",
+        //     direction, polygon, &self.file_name
+        // );
+        polygon
+    }
 }
 
 fn my_contour() -> Result<(), anyhow::Error> {
-    let mut puzzles: Vec<PuzzlePiece> = find_files("./assets/")
+    let mut puzzles: Vec<PuzzlePiece> = find_files("./input/")
         .into_par_iter()
         .map(|file_name| process(&file_name).unwrap_or_default())
         .collect();
 
-    println!("Puzzle count: {}", puzzles.len());
+    //println!("Puzzle count: {}", puzzles.len());
     let mut puzzles_links = Vec::new();
 
     let mut last_file_name = String::new();
@@ -214,7 +269,7 @@ fn my_contour() -> Result<(), anyhow::Error> {
 
         if puzzle.ok && puzzle.write_json {
             let _ = to_writer_pretty(
-                &File::create(format!("{}.json", puzzle.file_name))?,
+                &File::create(format!("./output/{}.json", puzzle.output_file))?,
                 &puzzle.contours_with_dir,
             );
         }
@@ -227,10 +282,15 @@ fn process(file_name: &str) -> Result<PuzzlePiece, anyhow::Error> {
     println!("Process: {} ...", file_name);
     let mut puzzle = PuzzlePiece::new();
     puzzle.file_name = file_name.to_string();
+    puzzle.output_file = puzzle.file_name.clone();
+
+    let _output_file = Path::file_name(Path::new(file_name))
+        .unwrap()
+        .to_os_string();
 
     // region: Read json file
     // Check if json file exists. In case yes, load it.
-    let path = format!("{}.json", puzzle.file_name);
+    let path = format!("./output/{}.json", puzzle.output_file);
     if Path::new(&path).exists() {
         let val = std::fs::read_to_string(path)?;
         let mut u: Vec<ContourWithDir> = from_str(&val)?;
@@ -242,13 +302,11 @@ fn process(file_name: &str) -> Result<PuzzlePiece, anyhow::Error> {
     }
     // endregion
 
-    // region: Read image
     puzzle.read_image()?;
-    // endregion
 
     // region: Convert to grey
     //show_image("Prima", &puzzle.original_image);
-    println!("Converto to gray scale: {}", &puzzle.file_name);
+    //println!("Convert to gray scale: {}", &puzzle.file_name);
     let phase = match to_grey(&puzzle.original_image) {
         Ok(phase) => phase,
         Err(err) => {
@@ -259,7 +317,7 @@ fn process(file_name: &str) -> Result<PuzzlePiece, anyhow::Error> {
     // endregion
 
     // region: Convert to blur
-    println!("Converto to blur: {}", &puzzle.file_name);
+    //println!("Convert to blur: {}", &puzzle.file_name);
     puzzle.grey = match blur(&phase) {
         Ok(value) => value,
         Err(err) => {
@@ -274,7 +332,7 @@ fn process(file_name: &str) -> Result<PuzzlePiece, anyhow::Error> {
     // endregion
 
     // region: Sub process
-    println!("Sub process: {}", &puzzle.file_name);
+    //println!("Sub process: {}", &puzzle.file_name);
     let contours = match sub_process(&puzzle.grey, puzzle.threshold) {
         Ok(contours) => contours,
         Err(err) => {
@@ -289,7 +347,7 @@ fn process(file_name: &str) -> Result<PuzzlePiece, anyhow::Error> {
     // endregion
 
     // region: Find bounding rect
-    println!("Find bounding rect: {}", &puzzle.file_name);
+    //println!("Find bounding rect: {}", &puzzle.file_name);
     puzzle.rect = match find_bounding_rect(&puzzle.contours) {
         Ok(rect) => rect,
         Err(err) => {
@@ -299,18 +357,12 @@ fn process(file_name: &str) -> Result<PuzzlePiece, anyhow::Error> {
     };
     // endregion
 
-    // region: Find centroid
-    println!("Find centroid: {}", &puzzle.file_name);
     puzzle.center = find_centroid(&puzzle.original_contours)?;
-    // endregion
 
-    // region: Find min max
-    println!("Find min max: {}", &puzzle.file_name);
-    let _ = puzzle.find_min_max();
-    // endregion
+    puzzle.find_min_max();
 
     // region: Fill poly
-    println!("Fill poly: {}", &puzzle.file_name);
+    //println!("Fill poly: {}", &puzzle.file_name);
     let phase = match fill_poly(&puzzle) {
         Ok(image) => image,
         Err(err) => {
@@ -326,7 +378,7 @@ fn process(file_name: &str) -> Result<PuzzlePiece, anyhow::Error> {
     // );
 
     // region: Find corners
-    println!("Find corners: {}", &puzzle.file_name);
+    //println!("Find corners: {}", &puzzle.file_name);
     let corners;
     let (max1, corners1) = match find_corners(&puzzle.center, &puzzle.grey) {
         Ok((im1, im2)) => (im1, im2),
@@ -366,7 +418,7 @@ fn process(file_name: &str) -> Result<PuzzlePiece, anyhow::Error> {
     //let _ = draw_simple_contour(&puzzle);
 
     // region: Split contour
-    println!("Split contour: {}", &puzzle.file_name);
+    //println!("Split contour: {}", &puzzle.file_name);
     (puzzle.contours, puzzle.contours_with_dir) = match split_contour(&mut puzzle) {
         Ok((im1, im2)) => (im1, im2),
         Err(err) => {
@@ -376,19 +428,11 @@ fn process(file_name: &str) -> Result<PuzzlePiece, anyhow::Error> {
     };
     // endregion
 
-    // region: Draw contour
-    println!("Draw contour: {}", &puzzle.file_name);
-    //write_contour(&puzzle)?;
-    match draw_contour(&puzzle) {
-        Ok(image) => image,
-        Err(err) => {
-            println!("draw_contour Error: {:?}", err);
-            return Err(anyhow!(err));
-        }
-    };
-    // endregion
+    //println!("Draw contour: {}", &puzzle.file_name);
+    draw_contour(&puzzle)?;
 
     puzzle.ok = true;
+
     Ok(puzzle)
 }
 
@@ -404,7 +448,7 @@ fn fill_poly(puzzle: &PuzzlePiece) -> Result<Mat, anyhow::Error> {
         Err(err) => println!("Error on fill_convex_poly: {}", err),
     }
 
-    let _name = format!("./{}fill_convex_poly.jpg", puzzle.file_name);
+    let _name = format!("./output/{}_fill_convex_poly.jpg", puzzle.output_file);
     //cv::imgcodecs::imwrite(&name, &new_phase, &cv::core::Vector::default())?;
 
     Ok(new_phase)
@@ -494,21 +538,22 @@ fn split_contour(
     // Per ogni direzione
     for dir in Direction::iter() {
         // Splitto il contour in base alla direzione
-        println!("Split single contour: {} - {:?}", puzzle.file_name, dir);
+        //println!("Split single contour: {} - {:?}", puzzle.file_name, dir);
         let SingleContourParams {
             single_contours,
             countour_traslated,
             x_max,
+            x_min,
             y_min,
             y_max,
-        } = match split_single_contour(puzzle, dir) {
+        } = match split_contour_by_direction(puzzle, dir) {
             Ok(params) => params,
             Err(err) => {
                 println!("Err split_contour -> split_single_contour {:?}", err);
                 return Err(anyhow!(err));
             }
         };
-        println!("Get Gender: {} - {:?}", puzzle.file_name, dir);
+        //println!("Get Gender: {} - {:?}", puzzle.file_name, dir);
         let gender = match get_gender(puzzle, dir, &single_contours) {
             Ok(g) => g,
             Err(err) => {
@@ -516,7 +561,7 @@ fn split_contour(
                 return Err(anyhow!(err));
             }
         };
-        println!("Create ContourWithDir: {} - {:?}", puzzle.file_name, dir);
+        //println!("Create ContourWithDir: {} - {:?}", puzzle.file_name, dir);
         let mut c = ContourWithDir::new(
             single_contours.clone(),
             dir,
@@ -570,81 +615,23 @@ fn sub_process(
     Ok(contour_values)
 }
 
-fn get_polygon(
-    puzzle: &PuzzlePiece,
-    delta: i32,
-    direction: &Direction,
-    iteration: i32,
-) -> Vector<Point> {
-    let mut polygon = Vector::new();
-
-    match direction {
-        Direction::Down => {
-            let delta1 = puzzle.y_max.y + delta;
-            polygon.push(puzzle.left_down_corner);
-            polygon.push(Point::new(puzzle.left_down_corner.x, delta1));
-            polygon.push(Point::new(puzzle.right_down_corner.x, delta1));
-            polygon.push(puzzle.right_down_corner);
-        }
-        Direction::Up => {
-            let delta1 = puzzle.y_min.y - delta;
-            polygon.push(puzzle.left_up_corner);
-            polygon.push(Point::new(puzzle.left_up_corner.x, delta1));
-            polygon.push(Point::new(puzzle.right_up_corner.x, delta1));
-            polygon.push(puzzle.right_up_corner);
-        }
-        Direction::Right => {
-            let delta1 = puzzle.x_max.x + delta;
-            polygon.push(puzzle.right_up_corner);
-            polygon.push(Point::new(delta1, puzzle.right_up_corner.y));
-            polygon.push(Point::new(delta1, puzzle.right_down_corner.y));
-            polygon.push(puzzle.right_down_corner);
-        }
-        Direction::Left => {
-            let delta1 = puzzle.x_min.x - delta;
-            polygon.push(puzzle.left_up_corner);
-            polygon.push(Point::new(delta1, puzzle.left_up_corner.y));
-            polygon.push(Point::new(delta1, puzzle.left_down_corner.y));
-            polygon.push(puzzle.left_down_corner);
-        }
-    }
-
-    let valore = delta * iteration * if iteration % 2 == 0 { 1 } else { -1 };
-    let mut mid = puzzle.center;
-    match direction {
-        Direction::Down | Direction::Up => {
-            mid.y = puzzle.center.y + valore;
-        }
-        Direction::Left | Direction::Right => {
-            mid.x = puzzle.center.x + valore;
-        }
-    }
-    polygon.push(mid);
-
-    println!(
-        "Crea il poligono direction: {:?} - poligon: {:?} per il file {:?}",
-        direction, polygon, &puzzle.file_name
-    );
-    polygon
-}
-
-fn split_single_contour(
+fn split_contour_by_direction(
     puzzle: &mut PuzzlePiece,
     direction: Direction,
 ) -> Result<SingleContourParams, anyhow::Error> {
-    let mut vector = Vector::new();
+    let mut single_contours = Vector::new();
 
-    println!(
-        "Recupero il primo contour per la direzione: {:?} del file {:?}",
-        direction, &puzzle.file_name
-    );
+    // println!(
+    //     "Recupero il primo contour per la direzione: {:?} del file {:?}",
+    //     direction, &puzzle.file_name
+    // );
     let first = puzzle.first_contour()?;
     let mut onda;
     let mut count;
     for iteration in 0..100 {
         onda = 0;
         count = 0;
-        vector.clear();
+        single_contours.clear();
         // println!(
         //     "Iterazione #{} nella direzione {:?} per il file {:?}",
         //     iteration, direction, &puzzle.file_name
@@ -653,7 +640,7 @@ fn split_single_contour(
         // alle 2 estremità nella direzione di direction;
         // In base ad iteration, modifica il poligono per cercare di recupeare
         // il lato del contour corretto
-        let polygon = get_polygon(puzzle, 10, &direction, iteration);
+        let polygon = puzzle.get_polygon(&direction, iteration);
         // Per ogni punto del contour
         for point in first.iter() {
             // Controllo se il punto è dentro il poligono che parte dal
@@ -670,7 +657,7 @@ fn split_single_contour(
                             onda = 1;
                             count += 1;
                         }
-                        vector.push(Point::new(point.x, point.y));
+                        single_contours.push(Point::new(point.x, point.y));
                     } else if onda != 2 {
                         // Il punto è fuori dal poligono
                         onda = 2;
@@ -692,8 +679,8 @@ fn split_single_contour(
         }
     }
 
-    let (up_left_point, _down_right_point) = match get_extreme(direction, &vector) {
-        Ok((im1, im2)) => (im1, im2),
+    let up_left_point = match get_extreme(direction, &single_contours) {
+        Ok((up_left_point, _)) => up_left_point,
         Err(err) => {
             println!(
                 "Err split_single_contour -> get_extreme(up_left_point, _down_right_point): {:?}",
@@ -704,7 +691,7 @@ fn split_single_contour(
     };
 
     let mut vector_after_first_traslate = Vector::new();
-    for point in vector.iter() {
+    for point in single_contours.iter() {
         vector_after_first_traslate.push(point - up_left_point);
     }
 
@@ -712,7 +699,7 @@ fn split_single_contour(
         direction,
         &vector_after_first_traslate,
     ) {
-        Ok((im1, im2)) => (im1, im2),
+        Ok((val1, val2)) => (val1, val2),
         Err(err) => {
             println!("Err split_single_contour -> get_extreme(up_left_point_translated, down_right_point_translated): {:?}", err);
             return Err(anyhow!(err));
@@ -758,35 +745,17 @@ fn split_single_contour(
         }
     }
 
-    let mut vector_traslated = Vector::new();
+    let mut countour_traslated = Vector::new();
 
     if y_max > 100 {
         for point in vector_rotated.iter() {
-            vector_traslated.push(Point::new(point.x, -point.y));
+            countour_traslated.push(Point::new(point.x, -point.y));
         }
     } else {
-        vector_traslated = vector_rotated.clone();
+        countour_traslated = vector_rotated.clone();
     }
 
-    let mut x_max = 0;
-    let mut y_min = i32::MAX;
-    let mut y_max = 0;
-    let mut x_min = i32::MAX;
-
-    for point in vector_traslated.iter() {
-        if point.x < x_min {
-            x_min = point.x;
-        }
-        if point.x > x_max {
-            x_max = point.x;
-        }
-        if point.y < y_min {
-            y_min = point.y;
-        }
-        if point.y > y_max {
-            y_max = point.y;
-        }
-    }
+    let (x_max, y_max, x_min, y_min) = find_limit(&countour_traslated);
 
     //let _ = cv::highgui::imshow("Phase", &phase);
     //draw_simple_contour(puzzle)?;
@@ -794,9 +763,10 @@ fn split_single_contour(
     //draw_contour(puzzle);
 
     Ok(SingleContourParams {
-        single_contours: vector,
-        countour_traslated: vector_traslated,
+        single_contours,
+        countour_traslated,
         x_max,
+        x_min,
         y_min,
         y_max,
     })
@@ -813,7 +783,7 @@ fn write_contour(puzzle: &PuzzlePiece) -> std::io::Result<()> {
         output += "\n\n";
     }
 
-    let mut file = File::create(format!("{}_contour.txt", puzzle.file_name))?;
+    let mut file = File::create(format!("./output/{}_contour.txt", puzzle.output_file))?;
     file.write_all(output.as_bytes())?;
 
     Ok(())
@@ -830,9 +800,12 @@ fn draw_contour(puzzle: &PuzzlePiece) -> Result<(), anyhow::Error> {
 
     draw::draw_internal_contour(&puzzle.contours, &mut phase)?;
 
-    println!("Salva l'immagine del file {:?}", puzzle.file_name);
+    println!(
+        "Save image file {:?} in ./output/{}_contours.jpg",
+        puzzle.file_name, puzzle.output_file
+    );
     let _ = write_image(
-        format!("{}_contours.jpg", puzzle.file_name).as_str(),
+        format!("./output/{}_contours.jpg", puzzle.output_file).as_str(),
         &phase,
     );
     //let _ = cv::highgui::imshow("Phase", &phase);
@@ -894,7 +867,7 @@ fn match_shapes(
 fn main() {
     match my_contour() {
         Ok(_) => {
-            println!("End without errors");
+            //println!("End without errors");
         }
         Err(err) => println!("Error: {:?}", err),
     };
