@@ -2,14 +2,15 @@ use anyhow::anyhow;
 use opencv::core::{Point, Vector};
 use opencv::{self as cv, prelude::*};
 use std::collections::HashMap;
+use std::path::Path;
 
 use crate::contour_with_dir::{ContourWithDir, Direction};
 use crate::cv_utils::{get_first_contour, sub_process};
 
 #[derive(Clone, Debug, Default)]
 pub struct PuzzlePiece {
-    pub file_name: String,
-    pub output_file: String,
+    file_name: String,
+    output_file: String,
     pub contours: Vector<Vector<Point>>,
     pub contours_with_dir: Vec<ContourWithDir>,
 
@@ -34,14 +35,19 @@ pub struct PuzzlePiece {
 
     pub polygon: HashMap<Direction, Vector<Point>>,
     pub ok: bool,
-    pub write_json: bool,
+    write_json: bool,
 }
 
 impl PuzzlePiece {
-    pub fn new() -> Self {
+    pub fn new(file_name: &str) -> Self {
         Self {
-            file_name: "puzzle".to_string(),
-            output_file: "".to_string(),
+            file_name: file_name.to_string(),
+            output_file: Path::new(file_name)
+                .file_stem()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string(),
             contours: Vector::new(),
             contours_with_dir: Vec::new(),
 
@@ -66,12 +72,20 @@ impl PuzzlePiece {
             center: Point::new(0, 0),
             polygon: HashMap::new(),
             ok: false,
-            write_json: false,
+            write_json: true,
         }
     }
 
-    pub fn get_file_name(&self) -> String {
-        self.file_name.clone()
+    pub fn get_write_json(&self) -> bool {
+        self.write_json
+    }
+
+    pub fn get_file_name(&self) -> &str {
+        &self.file_name
+    }
+
+    pub fn get_output_file(&self) -> &str {
+        &self.output_file
     }
 
     pub fn find_min_max(&mut self) {

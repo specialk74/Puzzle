@@ -36,8 +36,7 @@ fn my_contour() -> Result<(), anyhow::Error> {
     let mut last_file_name = String::new();
     for (element1, element2) in puzzles.iter().tuple_combinations() {
         if last_file_name != element1.get_file_name() {
-            last_file_name = element1.get_file_name();
-            println!("\n");
+            last_file_name = element1.get_file_name().to_string();
         }
         let (_, link1, link2) = match_shapes(element1, element2)?;
         puzzles_links.push(link1);
@@ -46,7 +45,7 @@ fn my_contour() -> Result<(), anyhow::Error> {
 
     for puzzle in puzzles.iter_mut() {
         for puzzle_link in puzzles_links.iter_mut() {
-            if puzzle.file_name == puzzle_link.file_name {
+            if puzzle.get_file_name() == puzzle_link.get_file_name() {
                 for sequence in puzzle.contours_with_dir.iter_mut() {
                     for sequence_link in puzzle_link.contours_with_dir.iter() {
                         if !sequence_link.links.is_empty() && sequence.dir == sequence_link.dir {
@@ -59,9 +58,9 @@ fn my_contour() -> Result<(), anyhow::Error> {
             }
         }
 
-        if puzzle.ok && puzzle.write_json {
+        if puzzle.ok && puzzle.get_write_json() {
             let _ = to_writer_pretty(
-                &File::create(format!("./output/{}.json", puzzle.output_file))?,
+                &File::create(format!("./output/{}.json", puzzle.get_output_file()))?,
                 &puzzle.contours_with_dir,
             );
         }
@@ -72,14 +71,13 @@ fn my_contour() -> Result<(), anyhow::Error> {
 
 fn process(file_name: &str) -> Result<PuzzlePiece, anyhow::Error> {
     println!("Process: {} ...", file_name);
-    let mut puzzle = PuzzlePiece::new();
-    puzzle.file_name = file_name.to_string();
+    let mut puzzle = PuzzlePiece::new(file_name);
 
     // region: Read json file
     // Check if json file exists. In case yes, load it.
-    puzzle.output_file = format!("./output/{}.json", puzzle.file_name);
-    if Path::new(&puzzle.output_file).exists() {
-        let val = std::fs::read_to_string(puzzle.output_file.clone())?;
+    let output_file = format!("./output/{}.json", puzzle.get_output_file());
+    if Path::new(&output_file).exists() {
+        let val = std::fs::read_to_string(output_file)?;
         let mut u: Vec<ContourWithDir> = from_str(&val)?;
         for contour_with_dir in u.iter_mut() {
             contour_with_dir.clear_links();
@@ -235,7 +233,7 @@ fn fill_poly(puzzle: &PuzzlePiece) -> Result<Mat, anyhow::Error> {
         Err(err) => println!("Error on fill_convex_poly: {}", err),
     }
 
-    let _name = format!("./output/{}_fill_convex_poly.jpg", puzzle.output_file);
+    let _name = format!("./output/{}_fill_convex_poly.jpg", puzzle.get_output_file());
     //cv::imgcodecs::imwrite(&name, &new_phase, &cv::core::Vector::default())?;
 
     Ok(new_phase)
@@ -534,7 +532,7 @@ fn write_contour(puzzle: &PuzzlePiece) -> std::io::Result<()> {
         output += "\n\n";
     }
 
-    let mut file = File::create(format!("./output/{}_contour.txt", puzzle.output_file))?;
+    let mut file = File::create(format!("./output/{}_contour.txt", puzzle.get_output_file()))?;
     file.write_all(output.as_bytes())?;
 
     Ok(())
@@ -553,10 +551,11 @@ fn draw_contour(puzzle: &PuzzlePiece) -> Result<(), anyhow::Error> {
 
     println!(
         "Save image file {:?} in ./output/{}_contours.jpg",
-        puzzle.file_name, puzzle.output_file
+        puzzle.get_file_name(),
+        puzzle.get_output_file()
     );
     let _ = write_image(
-        format!("./output/{}_contours.jpg", puzzle.output_file).as_str(),
+        format!("./output/{}_contours.jpg", puzzle.get_output_file()).as_str(),
         &phase,
     );
     //let _ = cv::highgui::imshow("Phase", &phase);
@@ -571,6 +570,8 @@ fn match_shapes(
 ) -> Result<(bool, PuzzlePiece, PuzzlePiece), anyhow::Error> {
     let mut puzzle1 = puzzle1_orig.clone();
     let mut puzzle2 = puzzle2_orig.clone();
+    let file_name_1 = puzzle1.get_file_name().to_string();
+    let file_name_2 = puzzle2.get_file_name().to_string();
     let mut add = false;
     for sequence1 in puzzle1.contours_with_dir.iter_mut() {
         for sequence2 in puzzle2.contours_with_dir.iter_mut() {
@@ -589,7 +590,7 @@ fn match_shapes(
                 let d4_d1 = (sequence1.d4 - sequence2.d1).abs();
                 if d5 < 100 && d3 < 30 && ((d1 < 60 && d4 < 60) || (d1_d4 < 60 && d4_d1 < 60)) {
                     println!("{} - {} - {:?} - {:?}; d1: {}; d2: {}; d3: {}, d4: {}; d5: {}; d1-d4: {}; d4-d1: {}",
-                        &puzzle1.file_name, &puzzle2.file_name, sequence1.dir, sequence2.dir,
+                        &file_name_1, &file_name_2, sequence1.dir, sequence2.dir,
                         d1,
                         d2,
                         d3,
@@ -600,13 +601,9 @@ fn match_shapes(
                     );
                     add = true;
                     //sequence1.links.push(format!("{}-{:?}",puzzle2.file_name, sequence2.dir));
-                    sequence1
-                        .links
-                        .insert(puzzle2.file_name.clone(), sequence2.dir);
+                    sequence1.links.insert(file_name_2.clone(), sequence2.dir);
                     //sequence2.links.push(format!("{}-{:?}",puzzle1.file_name, sequence1.dir));
-                    sequence2
-                        .links
-                        .insert(puzzle1.file_name.clone(), sequence1.dir);
+                    sequence2.links.insert(file_name_1.clone(), sequence1.dir);
                 };
             }
         }
