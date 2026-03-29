@@ -260,6 +260,42 @@ pub fn find_centroid(contours: &Vector<Vector<Point>>) -> Result<Point, anyhow::
     }
 }
 
+pub fn sub_process(
+    grey_phase: &Mat,
+    threshold_value: i32,
+) -> Result<Vector<Vector<Point>>, anyhow::Error> {
+    let im = match threshold(grey_phase, threshold_value) {
+        Ok(im) => im,
+        Err(err) => {
+            println!("sub_process->threshold Err: {:?}", err);
+            return Err(anyhow::anyhow!(err));
+        }
+    };
+    let im = match bitwise(&im) {
+        Ok(im) => im,
+        Err(err) => {
+            println!("sub_process->bitwise Err: {:?}", err);
+            return Err(anyhow::anyhow!(err));
+        }
+    };
+    let im = match morph(&im) {
+        Ok(im) => im,
+        Err(err) => {
+            println!("sub_process->morph Err: {:?}", err);
+            return Err(anyhow::anyhow!(err));
+        }
+    };
+    let contour_values = match find_contour(&im) {
+        Ok(contour_values) => contour_values,
+        Err(err) => {
+            println!("sub_process->find_contour Err: {:?}", err);
+            return Err(anyhow::anyhow!(err));
+        }
+    };
+
+    Ok(contour_values)
+}
+
 pub fn find_limit(vector_traslated: &Vector<Point>) -> (i32, i32, i32, i32) {
     let mut x_max = 0;
     let mut y_min = i32::MAX;

@@ -6,8 +6,6 @@ use opencv::{self as cv, prelude::*};
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
 use serde_json::{from_str, to_writer_pretty};
-use std::collections::HashMap;
-//use std::ffi::OsString;
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
@@ -16,221 +14,15 @@ use strum::IntoEnumIterator;
 mod contour_with_dir;
 mod cv_utils;
 mod draw;
+mod puzzle_piece;
 mod single_contour_params;
 mod utils;
 
 use crate::contour_with_dir::*;
 use crate::cv_utils::*;
+use crate::puzzle_piece::*;
 use crate::single_contour_params::SingleContourParams;
 use utils::*;
-
-#[derive(Clone, Debug, Default)]
-struct PuzzlePiece {
-    file_name: String,
-    output_file: String,
-    contours: Vector<Vector<Point>>,
-    contours_with_dir: Vec<ContourWithDir>,
-
-    x_min: Point,
-    y_min: Point,
-    x_max: Point,
-    y_max: Point,
-
-    original_image: Mat,
-    grey: Mat,
-    original_contours: Vector<Vector<Point>>,
-    corners: Vector<Point>,
-
-    left_up_corner: Point,
-    left_down_corner: Point,
-    right_up_corner: Point,
-    right_down_corner: Point,
-
-    rect: cv::core::Rect,
-    threshold: i32,
-    center: Point,
-
-    polygon: HashMap<Direction, Vector<Point>>,
-    ok: bool,
-    write_json: bool,
-}
-
-impl PuzzlePiece {
-    fn new() -> Self {
-        Self {
-            file_name: "puzzle".to_string(),
-            output_file: "".to_string(),
-            contours: Vector::new(),
-            contours_with_dir: Vec::new(),
-
-            x_min: Point::new(i32::MAX, 0),
-            y_min: Point::new(0, i32::MAX),
-            x_max: Point::new(0, 0),
-            y_max: Point::new(0, 0),
-
-            original_image: cv::core::Mat::default(),
-            grey: cv::core::Mat::default(),
-            original_contours: Vector::new(),
-            corners: Vector::new(),
-
-            left_up_corner: Point::new(i32::MAX, i32::MAX),
-            left_down_corner: Point::new(i32::MAX, 0),
-            right_up_corner: Point::new(0, i32::MAX),
-            right_down_corner: Point::new(0, 0),
-
-            rect: cv::core::Rect::default(),
-
-            threshold: 0,
-            center: Point::new(0, 0),
-            polygon: HashMap::new(),
-            ok: false,
-            write_json: false,
-        }
-    }
-
-    fn find_min_max(&mut self) {
-        for contour in &self.original_contours {
-            for point in contour.iter() {
-                if point.x < self.x_min.x {
-                    self.x_min.x = point.x;
-                    self.x_min.y = point.y;
-                }
-
-                if point.x > self.x_max.x {
-                    self.x_max.x = point.x;
-                    self.x_max.y = point.y;
-                }
-
-                if point.y < self.y_min.y {
-                    self.y_min.x = point.x;
-                    self.y_min.y = point.y;
-                }
-
-                if point.y > self.y_max.y {
-                    self.y_max.x = point.x;
-                    self.y_max.y = point.y;
-                }
-            }
-        }
-    }
-
-    fn set_corners(&mut self, corners: &Vector<Point>) {
-        self.corners = corners.clone();
-
-        for point in self.corners.iter() {
-            if point.y < self.center.y {
-                if point.x < self.center.x {
-                    self.left_up_corner.x = point.x;
-                    self.left_up_corner.y = point.y;
-                } else {
-                    self.right_up_corner.x = point.x;
-                    self.right_up_corner.y = point.y;
-                }
-            } else if point.x < self.center.x {
-                self.left_down_corner.x = point.x;
-                self.left_down_corner.y = point.y;
-            } else {
-                self.right_down_corner.x = point.x;
-                self.right_down_corner.y = point.y;
-            }
-        }
-    }
-
-    fn search_best_threshold(&mut self) -> Result<(), anyhow::Error> {
-        //println!("Search best threshold: {}", &self.file_name);
-
-        let mut threshold = 0;
-        let mut min_len = usize::MAX;
-        for threshold_value in 160..230 {
-            let contours = match sub_process(&self.grey, threshold_value) {
-                Ok(contours) => contours,
-                Err(err) => {
-                    println!("search_best_threshold -> sub_process: {:?}", err);
-                    return Err(anyhow!(err));
-                }
-            };
-
-            let first = get_first_contour(&contours)?;
-
-            if first.len() < min_len {
-                min_len = first.len();
-                threshold = threshold_value;
-            }
-        }
-
-        // println!(
-        //     "search_best_threshold -> {} -> min_len: {} - threshold: {}",
-        //     self.file_name, min_len, threshold
-        // );
-
-        self.threshold = threshold;
-        Ok(())
-    }
-
-    fn read_image(&mut self) -> Result<(), anyhow::Error> {
-        //println!("OpenCV read file: {}", &self.file_name);
-        self.original_image = read_image(&self.file_name)?;
-        Ok(())
-    }
-
-    fn first_contour(&self) -> Result<Vector<Point>, anyhow::Error> {
-        get_first_contour(&self.original_contours)
-    }
-
-    fn get_polygon(&self, direction: &Direction, iteration: i32) -> Vector<Point> {
-        let mut polygon = Vector::new();
-        let delta: i32 = 10;
-
-        match direction {
-            Direction::Down => {
-                let delta1 = self.y_max.y + delta;
-                polygon.push(self.left_down_corner);
-                polygon.push(Point::new(self.left_down_corner.x, delta1));
-                polygon.push(Point::new(self.right_down_corner.x, delta1));
-                polygon.push(self.right_down_corner);
-            }
-            Direction::Up => {
-                let delta1 = self.y_min.y - delta;
-                polygon.push(self.left_up_corner);
-                polygon.push(Point::new(self.left_up_corner.x, delta1));
-                polygon.push(Point::new(self.right_up_corner.x, delta1));
-                polygon.push(self.right_up_corner);
-            }
-            Direction::Right => {
-                let delta1 = self.x_max.x + delta;
-                polygon.push(self.right_up_corner);
-                polygon.push(Point::new(delta1, self.right_up_corner.y));
-                polygon.push(Point::new(delta1, self.right_down_corner.y));
-                polygon.push(self.right_down_corner);
-            }
-            Direction::Left => {
-                let delta1 = self.x_min.x - delta;
-                polygon.push(self.left_up_corner);
-                polygon.push(Point::new(delta1, self.left_up_corner.y));
-                polygon.push(Point::new(delta1, self.left_down_corner.y));
-                polygon.push(self.left_down_corner);
-            }
-        }
-
-        let valore = delta * iteration * if iteration % 2 == 0 { 1 } else { -1 };
-        let mut mid = self.center;
-        match direction {
-            Direction::Down | Direction::Up => {
-                mid.y = self.center.y + valore;
-            }
-            Direction::Left | Direction::Right => {
-                mid.x = self.center.x + valore;
-            }
-        }
-        polygon.push(mid);
-
-        // println!(
-        //     "Crea il poligono direction: {:?} - poligon: {:?} per il file {:?}",
-        //     direction, polygon, &self.file_name
-        // );
-        polygon
-    }
-}
 
 fn my_contour() -> Result<(), anyhow::Error> {
     let mut puzzles: Vec<PuzzlePiece> = find_files("./input/")
@@ -243,8 +35,8 @@ fn my_contour() -> Result<(), anyhow::Error> {
 
     let mut last_file_name = String::new();
     for (element1, element2) in puzzles.iter().tuple_combinations() {
-        if last_file_name != element1.file_name {
-            last_file_name = element1.file_name.clone();
+        if last_file_name != element1.get_file_name() {
+            last_file_name = element1.get_file_name();
             println!("\n");
         }
         let (_, link1, link2) = match_shapes(element1, element2)?;
@@ -282,17 +74,12 @@ fn process(file_name: &str) -> Result<PuzzlePiece, anyhow::Error> {
     println!("Process: {} ...", file_name);
     let mut puzzle = PuzzlePiece::new();
     puzzle.file_name = file_name.to_string();
-    puzzle.output_file = puzzle.file_name.clone();
-
-    let _output_file = Path::file_name(Path::new(file_name))
-        .unwrap()
-        .to_os_string();
 
     // region: Read json file
     // Check if json file exists. In case yes, load it.
-    let path = format!("./output/{}.json", puzzle.output_file);
-    if Path::new(&path).exists() {
-        let val = std::fs::read_to_string(path)?;
+    puzzle.output_file = format!("./output/{}.json", puzzle.file_name);
+    if Path::new(&puzzle.output_file).exists() {
+        let val = std::fs::read_to_string(puzzle.output_file.clone())?;
         let mut u: Vec<ContourWithDir> = from_str(&val)?;
         for contour_with_dir in u.iter_mut() {
             contour_with_dir.clear_links();
@@ -543,7 +330,7 @@ fn split_contour(
             single_contours,
             countour_traslated,
             x_max,
-            x_min,
+            x_min: _x_min,
             y_min,
             y_max,
         } = match split_contour_by_direction(puzzle, dir) {
@@ -577,42 +364,6 @@ fn split_contour(
     }
 
     Ok((contour_values, contour_values_with_dir))
-}
-
-fn sub_process(
-    grey_phase: &Mat,
-    threshold_value: i32,
-) -> Result<Vector<Vector<Point>>, anyhow::Error> {
-    let im = match threshold(grey_phase, threshold_value) {
-        Ok(im) => im,
-        Err(err) => {
-            println!("sub_process->threshold Err: {:?}", err);
-            return Err(anyhow!(err));
-        }
-    };
-    let im = match bitwise(&im) {
-        Ok(im) => im,
-        Err(err) => {
-            println!("sub_process->bitwise Err: {:?}", err);
-            return Err(anyhow!(err));
-        }
-    };
-    let im = match morph(&im) {
-        Ok(im) => im,
-        Err(err) => {
-            println!("sub_process->morph Err: {:?}", err);
-            return Err(anyhow!(err));
-        }
-    };
-    let contour_values = match find_contour(&im) {
-        Ok(contour_values) => contour_values,
-        Err(err) => {
-            println!("sub_process->find_contour Err: {:?}", err);
-            return Err(anyhow!(err));
-        }
-    };
-
-    Ok(contour_values)
 }
 
 fn split_contour_by_direction(
