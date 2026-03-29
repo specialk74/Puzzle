@@ -23,6 +23,7 @@ pub enum Genders {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ContourWithDir {
     #[serde(skip)]
+    #[allow(dead_code)]
     pub countour: Vector<Point>,
     #[serde(skip)]
     pub countour_traslated: Vector<Point>,
@@ -135,35 +136,17 @@ pub fn get_extreme(
         Direction::Down | Direction::Up => {
             let mut x_min = i32::MAX;
             let mut x_max = 0;
-
-            for index in 0..vector.len() {
-                let x = vector.get(index)?.x;
-                if x < x_min {
-                    x_min = x;
-                    up_left_point = vector.get(index)?;
-                }
-
-                if x > x_max {
-                    x_max = x;
-                    down_right = vector.get(index)?;
-                }
+            for p in vector.iter() {
+                if p.x < x_min { x_min = p.x; up_left_point = p; }
+                if p.x > x_max { x_max = p.x; down_right = p; }
             }
         }
         Direction::Left | Direction::Right => {
             let mut y_min = i32::MAX;
             let mut y_max = 0;
-
-            for index in 0..vector.len() {
-                let y = vector.get(index)?.y;
-                if y < y_min {
-                    y_min = y;
-                    up_left_point = vector.get(index)?;
-                }
-
-                if y > y_max {
-                    y_max = y;
-                    down_right = vector.get(index)?;
-                }
+            for p in vector.iter() {
+                if p.y < y_min { y_min = p.y; up_left_point = p; }
+                if p.y > y_max { y_max = p.y; down_right = p; }
             }
         }
     }

@@ -29,6 +29,7 @@ pub struct PuzzlePiece {
     pub right_up_corner: Point,
     pub right_down_corner: Point,
 
+    #[allow(dead_code)]
     pub rect: cv::core::Rect,
     pub threshold: i32,
     pub center: Point,

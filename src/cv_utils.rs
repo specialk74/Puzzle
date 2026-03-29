@@ -24,6 +24,7 @@ pub fn to_grey(phase: &Mat) -> Result<Mat, anyhow::Error> {
     Ok(new_phase)
 }
 
+#[allow(dead_code)]
 pub fn wait_key(delay: i32) -> Result<i32, cv::Error> {
     cv::highgui::wait_key(delay)
 }
@@ -58,29 +59,23 @@ pub fn get_color() -> cv::core::Scalar {
     cv::core::Scalar::new(n1, n2, n3, 255.0)
 }
 
+#[allow(dead_code)]
 pub fn show_image(text: &str, img: &Mat) {
     let _ = cv::highgui::imshow(text, img);
 }
 
+#[allow(dead_code)]
 pub fn find_bounding_rect(
     contours: &Vector<Vector<Point>>,
 ) -> Result<cv::core::Rect, anyhow::Error> {
-    let mut rect = cv::core::Rect::default();
-
     let mut max_rect = cv::core::Rect::default();
     for contour in contours {
-        rect = match cv::imgproc::bounding_rect(&contour) {
-            Ok(val) => val,
-            Err(err) => {
-                println!("find_bounding_rect - err: {}", err);
-                return Err(anyhow!(err));
-            }
-        };
+        let rect = cv::imgproc::bounding_rect(&contour)?;
         if rect.width > max_rect.width {
             max_rect = rect;
         }
     }
-    Ok(rect)
+    Ok(max_rect)
 }
 
 pub fn write_image(name: &str, phase: &Mat) -> Result<bool, opencv::Error> {
@@ -88,32 +83,28 @@ pub fn write_image(name: &str, phase: &Mat) -> Result<bool, opencv::Error> {
 }
 
 pub fn find_contour(phase: &Mat) -> Result<Vector<Vector<Point>>, anyhow::Error> {
-    let mut original_contour_values: Vector<Vector<Point>> = Vector::new();
-    let mut contour_values = Vector::new();
+    let mut all: Vector<Vector<Point>> = Vector::new();
     cv::imgproc::find_contours(
-        &phase,
-        &mut original_contour_values,
+        phase,
+        &mut all,
         cv::imgproc::RETR_TREE,
         cv::imgproc::CHAIN_APPROX_SIMPLE,
         Point::new(0, 0),
     )?;
 
-    let mut biggest = 0;
-    // Take only the first contour with len greater than 1000
-    for first in &original_contour_values {
-        if biggest < first.len() {
-            biggest = first.len();
+    let mut result = Vector::new();
+    let mut biggest_len = 0;
+    let mut biggest = Vector::new();
+    for c in &all {
+        if c.len() > biggest_len {
+            biggest_len = c.len();
+            biggest = c;
         }
     }
-
-    for first in &original_contour_values {
-        if biggest == first.len() {
-            contour_values.push(first);
-            break;
-        }
+    if biggest_len > 0 {
+        result.push(biggest);
     }
-
-    Ok(contour_values)
+    Ok(result)
 }
 
 pub fn morph(phase: &Mat) -> Result<Mat, anyhow::Error> {
@@ -160,21 +151,20 @@ pub fn read_image(file_name: &str) -> Result<Mat, opencv::Error> {
 }
 
 pub fn find_corners(center: &Point, phase: &Mat) -> Result<(f64, Vector<Point>), anyhow::Error> {
-    let mut corners = Vector::new();
     let max_corners = 4;
     let quality_level = 0.1;
-    let mut distance = 700.0;
-    let mut block_size;
-    let use_harris_detector: bool = true;
-    let k: f64 = 0.1;
+    let use_harris_detector = true;
+    let k = 0.1;
     let mut min_corners = Vector::new();
-    let mut points: Vector<Point> = Vector::new();
     let mut max_tot_distance = 0.0;
+    let mut distance = 700.0;
+
     loop {
-        block_size = 60;
+        let mut block_size = 60;
         loop {
-            match cv::imgproc::good_features_to_track(
-                &phase,
+            let mut corners = Vector::new();
+            if let Err(err) = cv::imgproc::good_features_to_track(
+                phase,
                 &mut corners,
                 max_corners,
                 quality_level,
@@ -184,47 +174,19 @@ pub fn find_corners(center: &Point, phase: &Mat) -> Result<(f64, Vector<Point>),
                 use_harris_detector,
                 k,
             ) {
-                Ok(_) => {}
-                Err(err) => println!(
-                    "Error on find_corners (block_size {}): {} with ",
-                    block_size, err
-                ),
-            };
+                println!("Error on find_corners (block_size {}): {}", block_size, err);
+            }
 
             if corners.len() == 4 {
-                let value_min_area = cv::imgproc::min_area_rect(&corners)?;
-
-                points.clear();
-                let min_area_center = Point::new(
-                    value_min_area.center.x as i32,
-                    value_min_area.center.y as i32,
-                );
-                let diff = min_area_center - *center;
-                points.push(diff);
-
-                let p1_diff = corners.get(0)? - *center;
-                points.clear();
-                points.push(p1_diff);
-
-                let p2_diff = corners.get(1)? - *center;
-                points.clear();
-                points.push(p2_diff);
-
-                let p3_diff = corners.get(2)? - *center;
-                points.clear();
-                points.push(p3_diff);
-
-                let p4_diff = corners.get(3)? - *center;
-                points.clear();
-                points.push(p4_diff);
-
-                points.push(p1_diff);
-                points.push(p2_diff);
-                points.push(p3_diff);
+                let mut points: Vector<Point> = Vector::new();
+                points.push(corners.get(0)? - *center);
+                points.push(corners.get(1)? - *center);
+                points.push(corners.get(2)? - *center);
+                points.push(corners.get(3)? - *center);
                 let tot_distance = cv::core::norm_def(&points)?;
 
-                if max_tot_distance < tot_distance {
-                    min_corners = corners.clone();
+                if tot_distance > max_tot_distance {
+                    min_corners = corners;
                     max_tot_distance = tot_distance;
                 }
             }
@@ -264,36 +226,10 @@ pub fn sub_process(
     grey_phase: &Mat,
     threshold_value: i32,
 ) -> Result<Vector<Vector<Point>>, anyhow::Error> {
-    let im = match threshold(grey_phase, threshold_value) {
-        Ok(im) => im,
-        Err(err) => {
-            println!("sub_process->threshold Err: {:?}", err);
-            return Err(anyhow::anyhow!(err));
-        }
-    };
-    let im = match bitwise(&im) {
-        Ok(im) => im,
-        Err(err) => {
-            println!("sub_process->bitwise Err: {:?}", err);
-            return Err(anyhow::anyhow!(err));
-        }
-    };
-    let im = match morph(&im) {
-        Ok(im) => im,
-        Err(err) => {
-            println!("sub_process->morph Err: {:?}", err);
-            return Err(anyhow::anyhow!(err));
-        }
-    };
-    let contour_values = match find_contour(&im) {
-        Ok(contour_values) => contour_values,
-        Err(err) => {
-            println!("sub_process->find_contour Err: {:?}", err);
-            return Err(anyhow::anyhow!(err));
-        }
-    };
-
-    Ok(contour_values)
+    let im = threshold(grey_phase, threshold_value)?;
+    let im = bitwise(&im)?;
+    let im = morph(&im)?;
+    find_contour(&im)
 }
 
 pub fn find_limit(vector_traslated: &Vector<Point>) -> (i32, i32, i32, i32) {

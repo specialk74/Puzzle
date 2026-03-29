@@ -7,7 +7,6 @@ use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
 use serde_json::{from_str, to_writer_pretty};
 use std::fs::File;
-use std::io::Write;
 use std::path::Path;
 use strum::IntoEnumIterator;
 
@@ -30,14 +29,9 @@ fn my_contour() -> Result<(), anyhow::Error> {
         .map(|file_name| process(&file_name).unwrap_or_default())
         .collect();
 
-    //println!("Puzzle count: {}", puzzles.len());
     let mut puzzles_links = Vec::new();
 
-    let mut last_file_name = String::new();
     for (element1, element2) in puzzles.iter().tuple_combinations() {
-        if last_file_name != element1.get_file_name() {
-            last_file_name = element1.get_file_name().to_string();
-        }
         let (_, link1, link2) = match_shapes(element1, element2)?;
         puzzles_links.push(link1);
         puzzles_links.push(link2);
@@ -89,96 +83,17 @@ fn process(file_name: &str) -> Result<PuzzlePiece, anyhow::Error> {
 
     puzzle.read_image()?;
 
-    // region: Convert to grey
-    //show_image("Prima", &puzzle.original_image);
-    //println!("Convert to gray scale: {}", &puzzle.file_name);
-    let phase = match to_grey(&puzzle.original_image) {
-        Ok(phase) => phase,
-        Err(err) => {
-            return Err(anyhow!(err));
-        }
-    };
-    //let _ = write_image(format!("{}_grey.jpg", puzzle.file_name).as_str(), &phase);
-    // endregion
-
-    // region: Convert to blur
-    //println!("Convert to blur: {}", &puzzle.file_name);
-    puzzle.grey = match blur(&phase) {
-        Ok(value) => value,
-        Err(err) => {
-            return Err(anyhow!(err));
-        }
-    };
-    //let _ = write_image(format!("{}_blur.jpg", puzzle.file_name).as_str(), &puzzle.grey,);
-    // endregion
-
-    // region: Search best threshold
+    let phase = to_grey(&puzzle.original_image)?;
+    puzzle.grey = blur(&phase)?;
     puzzle.search_best_threshold()?;
-    // endregion
-
-    // region: Sub process
-    //println!("Sub process: {}", &puzzle.file_name);
-    let contours = match sub_process(&puzzle.grey, puzzle.threshold) {
-        Ok(contours) => contours,
-        Err(err) => {
-            return Err(anyhow!(err));
-        }
-    };
-    puzzle.original_contours = contours;
-    // let _ = write_image(
-    //     format!("{}_sub_process.jpg", puzzle.file_name).as_str(),
-    //     &phase,
-    // );
-    // endregion
-
-    // region: Find bounding rect
-    //println!("Find bounding rect: {}", &puzzle.file_name);
-    puzzle.rect = match find_bounding_rect(&puzzle.contours) {
-        Ok(rect) => rect,
-        Err(err) => {
-            println!("find_bounding_rect Error: {:?}", err);
-            return Err(anyhow!(err));
-        }
-    };
-    // endregion
-
+    puzzle.original_contours = sub_process(&puzzle.grey, puzzle.threshold)?;
     puzzle.center = find_centroid(&puzzle.original_contours)?;
-
     puzzle.find_min_max();
+    let phase = fill_poly(&puzzle)?;
 
-    // region: Fill poly
-    //println!("Fill poly: {}", &puzzle.file_name);
-    let phase = match fill_poly(&puzzle) {
-        Ok(image) => image,
-        Err(err) => {
-            println!("fill_poly Error: {:?}", err);
-            return Err(anyhow!(err));
-        }
-    };
-    // endregion
-
-    // let _ = write_image(
-    //     format!("{}_fill_poly.jpg", puzzle.file_name).as_str(),
-    //     &phase,
-    // );
-
-    // region: Find corners
-    //println!("Find corners: {}", &puzzle.file_name);
     let corners;
-    let (max1, corners1) = match find_corners(&puzzle.center, &puzzle.grey) {
-        Ok((im1, im2)) => (im1, im2),
-        Err(err) => {
-            println!("process -> find_corners Error: {:?}", err);
-            return Err(anyhow!(err));
-        }
-    };
-    let (max2, corners2) = match find_corners(&puzzle.center, &phase) {
-        Ok((im1, im2)) => (im1, im2),
-        Err(err) => {
-            println!("process -> find_corners Error: {:?}", err);
-            return Err(anyhow!(err));
-        }
-    };
+    let (max1, corners1) = find_corners(&puzzle.center, &puzzle.grey)?;
+    let (max2, corners2) = find_corners(&puzzle.center, &phase)?;
 
     if max1 > max2 {
         corners = corners1;
@@ -202,16 +117,7 @@ fn process(file_name: &str) -> Result<PuzzlePiece, anyhow::Error> {
 
     //let _ = draw_simple_contour(&puzzle);
 
-    // region: Split contour
-    //println!("Split contour: {}", &puzzle.file_name);
-    (puzzle.contours, puzzle.contours_with_dir) = match split_contour(&mut puzzle) {
-        Ok((im1, im2)) => (im1, im2),
-        Err(err) => {
-            println!("split_contour Error: {:?}", err);
-            return Err(anyhow!(err));
-        }
-    };
-    // endregion
+    (puzzle.contours, puzzle.contours_with_dir) = split_contour(&mut puzzle)?;
 
     //println!("Draw contour: {}", &puzzle.file_name);
     draw_contour(&puzzle)?;
@@ -244,73 +150,35 @@ fn get_gender(
     direction: Direction,
     contour: &Vector<Point>,
 ) -> Result<Genders, anyhow::Error> {
-    let gender;
-
     let convex = cv::imgproc::bounding_rect(contour)?;
-    // println!("{} - {:?} - bounding_rect: {:?}",puzzle.file_name, direction, convex);
+    let small = convex.width < 200 || convex.height < 200;
 
-    match direction {
+    let gender = match direction {
         Direction::Down => {
-            let max_corner = if puzzle.left_down_corner.y > puzzle.right_down_corner.y {
-                puzzle.left_down_corner.y
-            } else {
-                puzzle.right_down_corner.y
-            };
-
-            if puzzle.y_max.y - max_corner > 100 {
-                gender = Genders::Male;
-            } else if convex.width < 200 || convex.height < 200 {
-                gender = Genders::Line;
-            } else {
-                gender = Genders::Female;
-            }
+            let max_corner = puzzle.left_down_corner.y.max(puzzle.right_down_corner.y);
+            if puzzle.y_max.y - max_corner > 100 { Genders::Male }
+            else if small { Genders::Line }
+            else { Genders::Female }
         }
         Direction::Left => {
-            let max_corner = if puzzle.left_down_corner.x > puzzle.left_up_corner.x {
-                puzzle.left_up_corner.x
-            } else {
-                puzzle.left_down_corner.x
-            };
-
-            if max_corner - puzzle.x_min.x > 100 {
-                gender = Genders::Male;
-            } else if convex.width < 200 || convex.height < 200 {
-                gender = Genders::Line;
-            } else {
-                gender = Genders::Female;
-            }
+            let min_corner = puzzle.left_down_corner.x.min(puzzle.left_up_corner.x);
+            if min_corner - puzzle.x_min.x > 100 { Genders::Male }
+            else if small { Genders::Line }
+            else { Genders::Female }
         }
         Direction::Right => {
-            let max_corner = if puzzle.right_up_corner.x > puzzle.right_down_corner.x {
-                puzzle.right_up_corner.x
-            } else {
-                puzzle.right_down_corner.x
-            };
-
-            if puzzle.x_max.x - max_corner > 100 {
-                gender = Genders::Male;
-            } else if convex.width < 200 || convex.height < 200 {
-                gender = Genders::Line;
-            } else {
-                gender = Genders::Female;
-            }
+            let max_corner = puzzle.right_up_corner.x.max(puzzle.right_down_corner.x);
+            if puzzle.x_max.x - max_corner > 100 { Genders::Male }
+            else if small { Genders::Line }
+            else { Genders::Female }
         }
         Direction::Up => {
-            let max_corner = if puzzle.left_up_corner.y > puzzle.right_up_corner.y {
-                puzzle.right_up_corner.y
-            } else {
-                puzzle.left_up_corner.y
-            };
-
-            if max_corner - puzzle.y_min.y > 100 {
-                gender = Genders::Male;
-            } else if convex.width < 200 || convex.height < 200 {
-                gender = Genders::Line;
-            } else {
-                gender = Genders::Female;
-            }
+            let min_corner = puzzle.left_up_corner.y.min(puzzle.right_up_corner.y);
+            if min_corner - puzzle.y_min.y > 100 { Genders::Male }
+            else if small { Genders::Line }
+            else { Genders::Female }
         }
-    }
+    };
     Ok(gender)
 }
 
@@ -519,23 +387,6 @@ fn split_contour_by_direction(
         y_min,
         y_max,
     })
-}
-
-fn write_contour(puzzle: &PuzzlePiece) -> std::io::Result<()> {
-    let mut output = String::new();
-    for contours_with_dir in &puzzle.contours_with_dir {
-        output += &format!("Direction: {:?}\n", contours_with_dir.dir);
-        output += &format!("Gender: {:?}\n", contours_with_dir.gender);
-        for point in contours_with_dir.countour.iter() {
-            output += &format!("{},{}\n", point.x, point.y);
-        }
-        output += "\n\n";
-    }
-
-    let mut file = File::create(format!("./output/{}_contour.txt", puzzle.get_output_file()))?;
-    file.write_all(output.as_bytes())?;
-
-    Ok(())
 }
 
 fn draw_contour(puzzle: &PuzzlePiece) -> Result<(), anyhow::Error> {
